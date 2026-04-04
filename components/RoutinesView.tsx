@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Routine, RoutineExercise } from '../types';
 import { INITIAL_EXERCISES } from '../constants';
-import { generateRoutineGroq } from '../services/groqService';
+import { generateRoutineGroq } from '../services/aiService';
 
 interface RoutinesViewProps {
   routines: Routine[];

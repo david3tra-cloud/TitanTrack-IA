@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Workout, Recommendation } from '../types';
-import { getPersonalizedRecommendationsGroq } from '../services/groqService';
+import { getPersonalizedRecommendationsGroq } from '../services/aiService';
 
 interface RecommendationsProps {
   workouts: Workout[];
