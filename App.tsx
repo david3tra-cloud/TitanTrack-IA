@@ -5,8 +5,7 @@ import {
   Routine,
   WeightRecord,
   UserProfile,
-  AuthUser,
-  StoredAuthUser
+  AuthUser
 } from './types';
 import Navbar from './components/Navbar';
 import AuthModal from './components/AuthModal';
@@ -17,6 +16,7 @@ import RoutinesView from './components/RoutinesView';
 import WeightTracker from './components/WeightTracker';
 import ExerciseLibrary from './components/ExerciseLibrary';
 import UserProfileView from './components/UserProfileView';
+import { supabase } from './src/lib/supabaseClient';
 
 const defaultUserProfile: UserProfile = {
   displayName: '',
@@ -128,7 +128,6 @@ const App: React.FC = () => {
     const savedRoutines = localStorage.getItem('titan_routines');
     const savedWeight = localStorage.getItem('titan_weight_history');
     const savedProfile = localStorage.getItem('titan_user_profile');
-    const savedSession = localStorage.getItem('titan_auth_session');
 
     if (savedWorkouts) {
       try {
@@ -162,12 +161,80 @@ const App: React.FC = () => {
       } catch (e) {}
     }
 
-    if (savedSession) {
-      try {
-        const parsedSession: AuthUser = JSON.parse(savedSession);
-        setAuthUser(parsedSession);
-      } catch (e) {}
-    }
+    const loadSession = async () => {
+      const { data, error } = await supabase.auth.getSession();
+
+      if (error) {
+        console.error('Error obteniendo sesión:', error.message);
+        return;
+      }
+
+      const session = data.session;
+
+      if (session?.user) {
+        const user = session.user;
+        const sessionUser: AuthUser = {
+          id: user.id,
+          displayName:
+            (user.user_metadata?.display_name as string) ||
+            user.email ||
+            '',
+          email: user.email || '',
+          plan: 'free'
+        };
+
+        setAuthUser(sessionUser);
+
+        setUserProfile(prev => ({
+          ...defaultUserProfile,
+          ...prev,
+          displayName: sessionUser.displayName,
+          plan: sessionUser.plan,
+          measurements: {
+            ...defaultUserProfile.measurements,
+            ...(prev.measurements || {})
+          }
+        }));
+      }
+    };
+
+    loadSession();
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const user = session.user;
+        const sessionUser: AuthUser = {
+          id: user.id,
+          displayName:
+            (user.user_metadata?.display_name as string) ||
+            user.email ||
+            '',
+          email: user.email || '',
+          plan: 'free'
+        };
+
+        setAuthUser(sessionUser);
+
+        setUserProfile(prev => ({
+          ...defaultUserProfile,
+          ...prev,
+          displayName: sessionUser.displayName,
+          plan: sessionUser.plan,
+          measurements: {
+            ...defaultUserProfile.measurements,
+            ...(prev.measurements || {})
+          }
+        }));
+      } else {
+        setAuthUser(null);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const openLoginModal = () => {
@@ -184,59 +251,42 @@ const App: React.FC = () => {
     setIsAuthModalOpen(false);
   };
 
-  const handleRegister = (
+  const handleRegister = async (
     displayName: string,
     email: string,
     password: string
-  ): { success: boolean; message: string } => {
-    const savedUsersRaw = localStorage.getItem('titan_auth_users');
-    let savedUsers: StoredAuthUser[] = [];
-
-    if (savedUsersRaw) {
-      try {
-        savedUsers = JSON.parse(savedUsersRaw);
-      } catch (e) {
-        savedUsers = [];
+  ): Promise<{ success: boolean; message: string }> => {
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        data: {
+          display_name: displayName
+        }
       }
-    }
+    });
 
-    const existingUser = savedUsers.find(
-      user => user.email.toLowerCase() === email.toLowerCase()
-    );
-
-    if (existingUser) {
+    if (error) {
       return {
         success: false,
-        message: 'Ya existe una cuenta con este email.'
+        message: error.message
       };
     }
 
-    const newUser: StoredAuthUser = {
-      id: Math.random().toString(36).slice(2, 11),
+    const sessionUser: AuthUser = {
+      id: data.user?.id ?? '',
       displayName,
-      email,
-      password,
+      email: data.user?.email ?? email,
       plan: 'free'
     };
 
-    const updatedUsers = [...savedUsers, newUser];
-    localStorage.setItem('titan_auth_users', JSON.stringify(updatedUsers));
-
-    const sessionUser: AuthUser = {
-      id: newUser.id,
-      displayName: newUser.displayName,
-      email: newUser.email,
-      plan: newUser.plan
-    };
-
     setAuthUser(sessionUser);
-    localStorage.setItem('titan_auth_session', JSON.stringify(sessionUser));
 
     const updatedProfile: UserProfile = {
       ...defaultUserProfile,
       ...userProfile,
-      displayName: displayName,
-      plan: newUser.plan,
+      displayName,
+      plan: 'free',
       measurements: {
         ...defaultUserProfile.measurements,
         ...(userProfile.measurements || {})
@@ -256,47 +306,41 @@ const App: React.FC = () => {
     };
   };
 
-  const handleLogin = (
+  const handleLogin = async (
     email: string,
     password: string
-  ): { success: boolean; message: string } => {
-    const savedUsersRaw = localStorage.getItem('titan_auth_users');
-    let savedUsers: StoredAuthUser[] = [];
+  ): Promise<{ success: boolean; message: string }> => {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
 
-    if (savedUsersRaw) {
-      try {
-        savedUsers = JSON.parse(savedUsersRaw);
-      } catch (e) {
-        savedUsers = [];
-      }
-    }
-
-    const foundUser = savedUsers.find(
-      user => user.email.toLowerCase() === email.toLowerCase() && user.password === password
-    );
-
-    if (!foundUser) {
+    if (error) {
       return {
         success: false,
-        message: 'Email o contraseña incorrectos.'
+        message: error.message
       };
     }
 
+    const user = data.user;
+
     const sessionUser: AuthUser = {
-      id: foundUser.id,
-      displayName: foundUser.displayName,
-      email: foundUser.email,
-      plan: foundUser.plan
+      id: user?.id ?? '',
+      displayName:
+        (user?.user_metadata?.display_name as string) ||
+        user?.email ||
+        '',
+      email: user?.email ?? email,
+      plan: 'free'
     };
 
     setAuthUser(sessionUser);
-    localStorage.setItem('titan_auth_session', JSON.stringify(sessionUser));
 
     const updatedProfile: UserProfile = {
       ...defaultUserProfile,
       ...userProfile,
-      displayName: foundUser.displayName,
-      plan: foundUser.plan,
+      displayName: sessionUser.displayName,
+      plan: sessionUser.plan,
       measurements: {
         ...defaultUserProfile.measurements,
         ...(userProfile.measurements || {})
@@ -316,9 +360,15 @@ const App: React.FC = () => {
     };
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+
+    if (error) {
+      console.error('Error cerrando sesión:', error.message);
+      return;
+    }
+
     setAuthUser(null);
-    localStorage.removeItem('titan_auth_session');
   };
 
   const saveWorkout = (workout: Workout) => {

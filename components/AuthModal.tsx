@@ -7,12 +7,15 @@ interface AuthModalProps {
   mode: AuthMode;
   onClose: () => void;
   onSwitchMode: (mode: AuthMode) => void;
-  onLogin: (email: string, password: string) => { success: boolean; message: string };
+  onLogin: (
+    email: string,
+    password: string
+  ) => Promise<{ success: boolean; message: string }>;
   onRegister: (
     displayName: string,
     email: string,
     password: string
-  ) => { success: boolean; message: string };
+  ) => Promise<{ success: boolean; message: string }>;
 }
 
 const AuthModal: React.FC<AuthModalProps> = ({
@@ -29,6 +32,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -41,7 +45,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape' && !isSubmitting) onClose();
     };
 
     if (isOpen) {
@@ -49,7 +53,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
     }
 
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, isSubmitting]);
 
   if (!isOpen) return null;
 
@@ -58,7 +62,7 @@ const AuthModal: React.FC<AuthModalProps> = ({
     setSuccessMessage('');
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     resetMessages();
 
@@ -67,51 +71,73 @@ const AuthModal: React.FC<AuthModalProps> = ({
       return;
     }
 
-    if (mode === 'register') {
-      if (!displayName.trim()) {
-        setError('Introduce tu nombre visible.');
+    setIsSubmitting(true);
+
+    try {
+      if (mode === 'register') {
+        if (!displayName.trim()) {
+          setError('Introduce tu nombre visible.');
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (password.length < 6) {
+          setError('La contraseña debe tener al menos 6 caracteres.');
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (password !== confirmPassword) {
+          setError('Las contraseñas no coinciden.');
+          setIsSubmitting(false);
+          return;
+        }
+
+        const result = await onRegister(
+          displayName.trim(),
+          email.trim().toLowerCase(),
+          password
+        );
+
+        if (!result.success) {
+          setError(result.message);
+          setIsSubmitting(false);
+          return;
+        }
+
+        setSuccessMessage(result.message);
+        setDisplayName('');
+        setEmail('');
+        setPassword('');
+        setConfirmPassword('');
+        setIsSubmitting(false);
         return;
       }
 
-      if (password.length < 6) {
-        setError('La contraseña debe tener al menos 6 caracteres.');
-        return;
-      }
+      const result = await onLogin(email.trim().toLowerCase(), password);
 
-      if (password !== confirmPassword) {
-        setError('Las contraseñas no coinciden.');
-        return;
-      }
-
-      const result = onRegister(displayName.trim(), email.trim().toLowerCase(), password);
       if (!result.success) {
         setError(result.message);
+        setIsSubmitting(false);
         return;
       }
 
       setSuccessMessage(result.message);
-      setDisplayName('');
       setEmail('');
       setPassword('');
-      setConfirmPassword('');
-      return;
+      setIsSubmitting(false);
+    } catch (err) {
+      setError('Ha ocurrido un error inesperado.');
+      setIsSubmitting(false);
     }
-
-    const result = onLogin(email.trim().toLowerCase(), password);
-    if (!result.success) {
-      setError(result.message);
-      return;
-    }
-
-    setSuccessMessage(result.message);
-    setEmail('');
-    setPassword('');
   };
 
   return (
     <div
       className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-md flex items-center justify-center p-4"
-      onClick={onClose}
+      onClick={() => {
+        if (!isSubmitting) onClose();
+      }}
     >
       <div
         className="relative w-full max-w-md rounded-[32px] border border-cyan-500/20 bg-slate-950/95 shadow-[0_0_60px_rgba(0,242,255,0.12)] overflow-hidden animate-in fade-in zoom-in-95 duration-300"
@@ -122,7 +148,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 w-10 h-10 rounded-full border border-white/10 text-slate-400 hover:text-white hover:border-cyan-400/40 transition-all"
+          disabled={isSubmitting}
+          className="absolute top-4 right-4 w-10 h-10 rounded-full border border-white/10 text-slate-400 hover:text-white hover:border-cyan-400/40 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Cerrar modal"
         >
           ✕
@@ -156,11 +183,12 @@ const AuthModal: React.FC<AuthModalProps> = ({
           <div className="grid grid-cols-2 gap-2 mb-6 rounded-2xl bg-black/40 border border-white/10 p-1">
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={() => {
                 onSwitchMode('login');
                 resetMessages();
               }}
-              className={`py-3 rounded-xl text-xs font-black uppercase tracking-[0.25em] transition-all ${
+              className={`py-3 rounded-xl text-xs font-black uppercase tracking-[0.25em] transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                 mode === 'login'
                   ? 'bg-cyan-500 text-black shadow-[0_0_20px_rgba(0,242,255,0.4)]'
                   : 'text-slate-400 hover:text-white'
@@ -171,11 +199,12 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
             <button
               type="button"
+              disabled={isSubmitting}
               onClick={() => {
                 onSwitchMode('register');
                 resetMessages();
               }}
-              className={`py-3 rounded-xl text-xs font-black uppercase tracking-[0.25em] transition-all ${
+              className={`py-3 rounded-xl text-xs font-black uppercase tracking-[0.25em] transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                 mode === 'register'
                   ? 'bg-fuchsia-500 text-white shadow-[0_0_20px_rgba(255,0,247,0.35)]'
                   : 'text-slate-400 hover:text-white'
@@ -196,7 +225,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
                   value={displayName}
                   onChange={e => setDisplayName(e.target.value)}
                   placeholder="Ej: David"
-                  className="w-full rounded-2xl bg-slate-900/80 border border-white/10 px-4 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,255,0.12)] transition-all"
+                  disabled={isSubmitting}
+                  className="w-full rounded-2xl bg-slate-900/80 border border-white/10 px-4 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,255,0.12)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
             )}
@@ -210,7 +240,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
                 value={email}
                 onChange={e => setEmail(e.target.value)}
                 placeholder="tuemail@correo.com"
-                className="w-full rounded-2xl bg-slate-900/80 border border-white/10 px-4 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,255,0.12)] transition-all"
+                disabled={isSubmitting}
+                className="w-full rounded-2xl bg-slate-900/80 border border-white/10 px-4 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,255,0.12)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -223,7 +254,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 placeholder="••••••••"
-                className="w-full rounded-2xl bg-slate-900/80 border border-white/10 px-4 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,255,0.12)] transition-all"
+                disabled={isSubmitting}
+                className="w-full rounded-2xl bg-slate-900/80 border border-white/10 px-4 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,255,0.12)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
               />
             </div>
 
@@ -237,7 +269,8 @@ const AuthModal: React.FC<AuthModalProps> = ({
                   value={confirmPassword}
                   onChange={e => setConfirmPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full rounded-2xl bg-slate-900/80 border border-white/10 px-4 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,255,0.12)] transition-all"
+                  disabled={isSubmitting}
+                  className="w-full rounded-2xl bg-slate-900/80 border border-white/10 px-4 py-4 text-white placeholder:text-slate-500 focus:outline-none focus:border-cyan-400 focus:shadow-[0_0_0_3px_rgba(0,242,255,0.12)] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 />
               </div>
             )}
@@ -256,13 +289,20 @@ const AuthModal: React.FC<AuthModalProps> = ({
 
             <button
               type="submit"
-              className={`w-full py-4 rounded-2xl font-black text-sm uppercase tracking-[0.3em] transition-all ${
+              disabled={isSubmitting}
+              className={`w-full py-4 rounded-2xl font-black text-sm uppercase tracking-[0.3em] transition-all disabled:opacity-60 disabled:cursor-not-allowed ${
                 mode === 'login'
                   ? 'bg-gradient-to-r from-cyan-500 to-blue-600 text-black shadow-[0_0_30px_rgba(0,242,255,0.25)] hover:scale-[1.01]'
                   : 'bg-gradient-to-r from-fuchsia-500 to-cyan-400 text-white shadow-[0_0_30px_rgba(255,0,247,0.2)] hover:scale-[1.01]'
               }`}
             >
-              {mode === 'login' ? 'Entrar' : 'Crear cuenta'}
+              {isSubmitting
+                ? mode === 'login'
+                  ? 'Entrando...'
+                  : 'Creando...'
+                : mode === 'login'
+                ? 'Entrar'
+                : 'Crear cuenta'}
             </button>
           </form>
 
@@ -271,11 +311,12 @@ const AuthModal: React.FC<AuthModalProps> = ({
               {mode === 'login' ? '¿No tienes cuenta?' : '¿Ya tienes cuenta?'}{' '}
               <button
                 type="button"
+                disabled={isSubmitting}
                 onClick={() => {
                   onSwitchMode(mode === 'login' ? 'register' : 'login');
                   resetMessages();
                 }}
-                className="text-cyan-400 font-bold hover:text-white transition-colors"
+                className="text-cyan-400 font-bold hover:text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {mode === 'login' ? 'Regístrate' : 'Inicia sesión'}
               </button>
