@@ -495,32 +495,35 @@ const App: React.FC = () => {
     localStorage.setItem('titan_routines', JSON.stringify(updated));
   };
 
-  const addWeightRecord = async (weight: number) => {
-    if (!authUser?.id) {
-      console.error('No hay usuario autenticado para guardar peso.');
-      return;
-    }
+     const addWeightRecord = async (weight: number) => {
+  if (!authUser?.id) {
+    console.error('No hay usuario autenticado para guardar peso.');
+    return;
+  }
 
-    const newRecord: WeightRecord = {
-      id: Math.random().toString(36).slice(2, 11),
-      date: new Date().toISOString(),
-      weight
-    };
+  const newRecord: WeightRecord = {
+    id: Math.random().toString(36).slice(2, 11),
+    date: new Date().toISOString(),
+    weight
+  };
 
-    const { error } = await supabase.from('weight_records').insert({
+  const { error } = await supabase
+    .from('weight_records')
+    .insert({
       id: newRecord.id,
       user_id: authUser.id,
       date: newRecord.date,
       weight: newRecord.weight
     });
 
-    if (error) {
-      console.error('Error guardando weight_record:', error.message);
-      return;
-    }
+  if (error) {
+    console.error('Error guardando weight_record:', error);
+    alert(`Error guardando peso: ${error.message}`);
+    return;
+  }
 
-    setWeightRecords(prev => [...prev, newRecord]);
-  };
+  setWeightRecords(prev => [...prev, newRecord]);
+};
 
   const deleteWeightRecord = async (id: string) => {
     const { error } = await supabase
