@@ -495,14 +495,21 @@ const App: React.FC = () => {
     localStorage.setItem('titan_routines', JSON.stringify(updated));
   };
 
-     const addWeightRecord = async (weight: number) => {
+    const addWeightRecord = async (weight: number) => {
   alert('Entró en addWeightRecord');
   console.log('Entró en addWeightRecord');
 
   if (!authUser?.id) {
     console.error('No hay usuario autenticado para guardar peso.');
+    alert('No hay authUser.id');
     return;
   }
+
+  console.log('authUser.id:', authUser.id);
+
+  const { data: authData, error: authError } = await supabase.auth.getUser();
+  console.log('supabase.auth.getUser():', authData, authError);
+  alert(`Supabase user: ${authData.user?.id ?? 'undefined'}`);
 
   const newRecord: WeightRecord = {
     id: Math.random().toString(36).slice(2, 11),
@@ -510,14 +517,20 @@ const App: React.FC = () => {
     weight
   };
 
-  const { error } = await supabase
+  console.log('newRecord:', newRecord);
+  alert('Antes del insert');
+
+  const { data, error } = await supabase
     .from('weight_records')
     .insert({
       id: newRecord.id,
       user_id: authUser.id,
       date: newRecord.date,
       weight: newRecord.weight
-    });
+    })
+    .select();
+
+  console.log('Resultado insert:', data, error);
 
   if (error) {
     console.error('Error guardando weight_record:', error);
@@ -525,6 +538,7 @@ const App: React.FC = () => {
     return;
   }
 
+  alert('Insert OK');
   setWeightRecords(prev => [...prev, newRecord]);
 };
 
