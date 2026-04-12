@@ -496,6 +496,9 @@ const App: React.FC = () => {
   };
 
      const addWeightRecord = async (weight: number) => {
+  alert('Entró en addWeightRecord');
+  console.log('Entró en addWeightRecord');
+
   if (!authUser?.id) {
     console.error('No hay usuario autenticado para guardar peso.');
     return;
