@@ -1,31 +1,31 @@
 // services/groqService.ts
-import { Routine, Workout } from "../types";
+import { Routine, Workout, UserProfile } from '../types';
 
 const getGroqApiKey = () => {
   const key = import.meta.env.VITE_GROQ_API_KEY;
-  console.log("Groq API Key:", key ? "Loaded" : "Missing");
+  console.log('Groq API Key:', key ? 'Loaded' : 'Missing');
   if (!key) {
     throw new Error(
-      "VITE_GROQ_API_KEY no está configurada en las variables de entorno."
+      'VITE_GROQ_API_KEY no está configurada en las variables de entorno.'
     );
   }
   return key;
 };
 
-const GROQ_MODEL = "llama-3.3-70b-versatile";
+const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 type RecommendationCategory =
-  | "strength"
-  | "recovery"
-  | "nutrition"
-  | "technique";
+  | 'strength'
+  | 'recovery'
+  | 'nutrition'
+  | 'technique';
 
 interface RoutineParams {
   daysPerWeek: string;
   objective: string;
   level: string;
   equipment?: string;
-  mode?: "basic" | "pro_plan";
+  mode?: 'basic' | 'pro_plan';
   sessionMinutes?: number;
 }
 
@@ -34,10 +34,10 @@ interface RoutineParams {
 const cleanJsonText = (text: string) => {
   let cleaned = text.trim();
 
-  if (cleaned.startsWith("```")) {
+  if (cleaned.startsWith('```')) {
     cleaned = cleaned
-      .replace(/^```(?:json)?\s*/i, "")
-      .replace(/\s*```$/i, "")
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
       .trim();
   }
 
@@ -52,27 +52,27 @@ const safeParseJson = (text: string) => {
 const generateId = () => Math.random().toString(36).slice(2, 11);
 
 const getDayCountFromText = (value?: string) => {
-  const parsed = parseInt(value || "", 10);
+  const parsed = parseInt(value || '', 10);
   if (Number.isNaN(parsed) || parsed <= 0) return 3;
   return Math.min(parsed, 7);
 };
 
 const normalizeExercise = (ex: any) => ({
   id: generateId(),
-  name: String(ex?.name || "Ejercicio"),
+  name: String(ex?.name || 'Ejercicio'),
   sets: Number(ex?.sets) > 0 ? Number(ex.sets) : 3,
-  reps: String(ex?.reps || "10-12"),
-  restTime: String(ex?.restTime || "60s"),
+  reps: String(ex?.reps || '10-12'),
+  restTime: String(ex?.restTime || '60s')
 });
 
 const normalizeRoutine = (routine: any): Routine => {
   return {
     id: generateId(),
-    name: String(routine?.name || "Rutina generada"),
-    description: String(routine?.description || ""),
+    name: String(routine?.name || 'Rutina generada'),
+    description: String(routine?.description || ''),
     exercises: Array.isArray(routine?.exercises)
       ? routine.exercises.map(normalizeExercise)
-      : [],
+      : []
   };
 };
 
@@ -84,26 +84,48 @@ const extractMessageContent = (data: any): string => {
 // Recomendaciones personalizadas
 // ==============================
 export const getPersonalizedRecommendationsGroq = async (
-  workouts: Workout[]
+  workouts: Workout[],
+  profile: UserProfile
 ) => {
   try {
     const apiKey = getGroqApiKey();
 
     const historySummary = workouts
-      .map((w) => ({
+      .map(w => ({
         date: w.date,
-        exercises: w.exercises.map((e) => ({
+        exercises: w.exercises.map(e => ({
           name: e.name,
           sets: e.sets.length,
-          maxWeight: Math.max(...e.sets.map((s) => s.weight), 0),
-        })),
+          maxWeight: Math.max(...e.sets.map(s => s.weight), 0)
+        }))
       }))
       .slice(-10);
 
+    const profileSummary = {
+      displayName: profile.displayName || null,
+      sex: profile.sex || null,
+      goal: profile.goal || null,
+      level: profile.level || null,
+      weightKg: profile.weightKg ?? null,
+      heightCm: profile.heightCm ?? null,
+      trainingDaysPerWeek: profile.trainingDaysPerWeek ?? null,
+      sessionMinutes: profile.sessionMinutes ?? null,
+      preferredStyle: profile.preferredStyle || null,
+      equipment: profile.equipment && profile.equipment.length > 0 ? profile.equipment : null,
+      limitations: profile.limitations || null,
+      measurements: profile.measurements || null
+    };
+
     const prompt = `Eres un entrenador personal experto.
 
-Analiza el siguiente historial de entrenamiento de gimnasio y proporciona 4 recomendaciones personalizadas para mejorar.
-Ten en cuenta sobrecarga progresiva, variedad de ejercicios, equilibrio de grupos musculares y posibles debilidades.
+Analiza el siguiente PERFIL de usuario y su HISTORIAL de entrenamiento de gimnasio y proporciona 4 recomendaciones personalizadas para mejorar.
+Ten en cuenta:
+- objetivo del usuario
+- nivel actual
+- material disponible
+- frecuencia y duración de sesiones
+- posibles limitaciones articulares
+- distribución de grupos musculares y sobrecarga progresiva
 
 Devuelve SOLO un JSON con este formato exacto, sin texto adicional:
 
@@ -121,34 +143,38 @@ Devuelve SOLO un JSON con este formato exacto, sin texto adicional:
 - "nutrition"
 - "technique"
 
-Historial:
-${JSON.stringify(historySummary)}`;
+PERFIL:
+${JSON.stringify(profileSummary, null, 2)}
+
+HISTORIAL (máx. 10 sesiones recientes):
+${JSON.stringify(historySummary, null, 2)}
+`;
 
     const response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
+      'https://api.groq.com/openai/v1/chat/completions',
       {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           model: GROQ_MODEL,
           messages: [
             {
-              role: "user",
-              content: prompt,
-            },
+              role: 'user',
+              content: prompt
+            }
           ],
-          temperature: 0.7,
-        }),
+          temperature: 0.7
+        })
       }
     );
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
       console.error(
-        "Error response from Groq (recommendations):",
+        'Error response from Groq (recommendations):',
         errorData || response.statusText
       );
       return [];
@@ -162,21 +188,21 @@ ${JSON.stringify(historySummary)}`;
       if (!Array.isArray(parsed)) return [];
 
       return parsed.filter(
-        (item) =>
+        item =>
           item &&
-          typeof item.title === "string" &&
-          typeof item.description === "string" &&
-          ["strength", "recovery", "nutrition", "technique"].includes(
+          typeof item.title === 'string' &&
+          typeof item.description === 'string' &&
+          ['strength', 'recovery', 'nutrition', 'technique'].includes(
             item.category as RecommendationCategory
           )
       );
     } catch (e) {
-      console.error("Failed to parse Groq recommendations", e, text);
+      console.error('Failed to parse Groq recommendations', e, text);
       return [];
     }
   } catch (err: any) {
     console.error(
-      "Error in getPersonalizedRecommendationsGroq:",
+      'Error in getPersonalizedRecommendationsGroq:',
       err.message
     );
     return [];
@@ -192,7 +218,7 @@ export const generateRoutineGroq = async (
   try {
     const apiKey = getGroqApiKey();
     const requestedDayCount = getDayCountFromText(params.daysPerWeek);
-    const isPlanMode = params.mode === "pro_plan";
+    const isPlanMode = params.mode === 'pro_plan';
 
     const minutes = params.sessionMinutes ?? 60;
     let targetExercisesPerDay = 4;
@@ -205,7 +231,7 @@ Crea una rutina de gimnasio personalizada con estos parámetros:
 - Días por semana: ${params.daysPerWeek}
 - Objetivo principal: ${params.objective}
 - Nivel del usuario: ${params.level}
-- Equipo disponible: ${params.equipment || "Gimnasio completo"}
+- Equipo disponible: ${params.equipment || 'Gimnasio completo'}
 - Minutos por sesión: ${minutes}
 
 Ajusta el número de ejercicios al tiempo disponible (menos ejercicios si hay pocos minutos, más si hay más tiempo), pero siempre con calidad.
@@ -231,7 +257,7 @@ Crea un PLAN SEMANAL de gimnasio con estos parámetros:
 - Días por semana: ${params.daysPerWeek}
 - Objetivo principal: ${params.objective}
 - Nivel del usuario: ${params.level}
-- Equipo disponible: ${params.equipment || "Gimnasio completo"}
+- Equipo disponible: ${params.equipment || 'Gimnasio completo'}
 - Minutos por sesión: ${minutes}
 
 NORMAS DE DISTRIBUCIÓN:
@@ -277,33 +303,33 @@ Devuelve SOLO un JSON con este formato exacto:
     const prompt = isPlanMode ? planPrompt : basicPrompt;
 
     const response = await fetch(
-      "https://api.groq.com/openai/v1/chat/completions",
+      'https://api.groq.com/openai/v1/chat/completions',
       {
-        method: "POST",
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`
         },
         body: JSON.stringify({
           model: GROQ_MODEL,
           messages: [
             {
-              role: "user",
-              content: prompt,
-            },
+              role: 'user',
+              content: prompt
+            }
           ],
-          temperature: 0.7,
-        }),
+          temperature: 0.7
+        })
       }
     );
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => null);
       console.error(
-        "Error response from Groq (routine):",
+        'Error response from Groq (routine):',
         errorData || response.statusText
       );
-      throw new Error("La API de Groq devolvió un error.");
+      throw new Error('La API de Groq devolvió un error.');
     }
 
     const data = await response.json();
@@ -313,9 +339,9 @@ Devuelve SOLO un JSON con este formato exacto:
     try {
       parsed = safeParseJson(text);
     } catch (e) {
-      console.error("Error parsing routine JSON from Groq:", e, text);
+      console.error('Error parsing routine JSON from Groq:', e, text);
       throw new Error(
-        "No se pudo parsear la respuesta de la rutina generada."
+        'No se pudo parsear la respuesta de la rutina generada.'
       );
     }
 
@@ -330,11 +356,11 @@ Devuelve SOLO un JSON con este formato exacto:
     const normalizedDays = rawDays
       .slice(0, requestedDayCount)
       .map((day: any) => ({
-        day: String(day?.day || "Día"),
-        focus: String(day?.focus || ""),
+        day: String(day?.day || 'Día'),
+        focus: String(day?.focus || ''),
         exercises: Array.isArray(day?.exercises)
           ? day.exercises.map(normalizeExercise)
-          : [],
+          : []
       }));
 
     const flattenedExercises = normalizedDays.flatMap((day: any) =>
@@ -343,22 +369,22 @@ Devuelve SOLO un JSON con este formato exacto:
         name: day.focus
           ? `${exercise.name} · ${day.day} · ${day.focus}`
           : `${exercise.name} · ${day.day}`,
-        dayTag: day.day,
+        dayTag: day.day
       }))
     );
 
     return {
       id: generateId(),
-      name: String(parsed?.name || "PLAN SEMANAL GENERADO"),
+      name: String(parsed?.name || 'PLAN SEMANAL GENERADO'),
       description: `${String(
-        parsed?.description || "Plan semanal personalizado"
+        parsed?.description || 'Plan semanal personalizado'
       )} [PLAN_DAYS:${requestedDayCount}]`,
-      exercises: flattenedExercises,
+      exercises: flattenedExercises
     };
   } catch (error: any) {
-    console.error("Error generating routine (Groq):", error.message);
+    console.error('Error generating routine (Groq):', error.message);
     throw new Error(
-      error.message || "No se pudo generar la rutina. Intenta nuevamente."
+      error.message || 'No se pudo generar la rutina. Intenta nuevamente.'
     );
   }
 };

@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { Workout, Recommendation } from '../types';
+import { Workout, Recommendation, UserProfile } from '../types';
 import { getPersonalizedRecommendationsGroq } from '../services/aiService';
 
 interface RecommendationsProps {
   workouts: Workout[];
+  profile: UserProfile;
   isPro?: boolean;
   nutritionAppUrl?: string;
 }
 
 const Recommendations: React.FC<RecommendationsProps> = ({
   workouts,
+  profile,
   isPro = false,
   nutritionAppUrl
 }) => {
@@ -23,7 +25,7 @@ const Recommendations: React.FC<RecommendationsProps> = ({
     setError(null);
 
     try {
-      const recs = await getPersonalizedRecommendationsGroq(workouts);
+      const recs = await getPersonalizedRecommendationsGroq(workouts, profile);
       setRecommendations(recs);
     } catch (err) {
       setError('No se pudieron cargar las recomendaciones en este momento.');
@@ -37,6 +39,7 @@ const Recommendations: React.FC<RecommendationsProps> = ({
     if (workouts.length > 0 && recommendations.length === 0) {
       fetchRecommendations();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workouts]);
 
   const getCategoryColor = (cat: string) => {
@@ -93,8 +96,8 @@ const Recommendations: React.FC<RecommendationsProps> = ({
 
             <p className="text-slate-300 mt-3 max-w-2xl text-sm md:text-base">
               {isPro
-                ? 'Analiza tus entrenos y te orienta con un enfoque más premium, alineado con tu progresión, recuperación y estrategia semanal.'
-                : 'Análisis rápido basado en tus últimos entrenamientos para darte consejos útiles y accionables.'}
+                ? 'Analiza tu perfil y tus entrenos y te orienta con un enfoque más premium, alineado con tu progresión, recuperación y estrategia semanal.'
+                : 'Análisis rápido basado en tu perfil y tus últimos entrenamientos para darte consejos útiles y accionables.'}
             </p>
           </div>
 
@@ -124,7 +127,7 @@ const Recommendations: React.FC<RecommendationsProps> = ({
       {/* SKELETON */}
       {loading && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[1, 2, 3, 4].map((i) => (
+          {[1, 2, 3, 4].map(i => (
             <div
               key={i}
               className="h-40 bg-slate-800 rounded-2xl animate-pulse border border-slate-700"
@@ -211,7 +214,8 @@ const Recommendations: React.FC<RecommendationsProps> = ({
                 Sube de nivel tu coach
               </h3>
               <p className="text-slate-300 text-sm mt-2 max-w-2xl">
-                Desbloquea un coach más avanzado, con enfoque en progresión, recuperación, estrategia semanal y acceso premium a nutrición IA.
+                Desbloquea un coach más avanzado, con enfoque en progresión, recuperación, estrategia semanal y acceso
+                premium a nutrición IA.
               </p>
             </div>
 

@@ -123,49 +123,131 @@ const App: React.FC = () => {
   const isInfinity = userProfile.plan === 'infinity';
   const isLoggedIn = !!authUser;
 
+  const clearAuthState = () => {
+    setAuthUser(null);
+    setUserProfile(defaultUserProfile);
+    setCurrentView(View.DASHBOARD);
+    setShowLogger(false);
+    setIsFabMenuOpen(false);
+    setWeightRecords([]); // limpiamos peso al cerrar sesión
+  };
+
+  const loadProfile = async (
+    userId: string,
+    fallbackEmail?: string,
+    fallbackDisplayName?: string
+  ): Promise<boolean> => {
+    const { data, error } = await supabase
+      .from('profiles')
+      .select(
+        `
+          id,
+          display_name,
+          plan,
+          sex,
+          birth_year,
+          height_cm,
+          weight_kg,
+          goal,
+          level,
+          training_days_per_week,
+          session_minutes,
+          preferred_style,
+          equipment,
+          limitations,
+          measurements
+        `
+      )
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (error) {
+      console.error('Error cargando profile:', error.message);
+      return false;
+    }
+
+    if (!data) {
+      setUserProfile(defaultUserProfile);
+      setAuthUser(prev =>
+        prev
+          ? {
+              ...prev,
+              displayName: prev.displayName || fallbackDisplayName || fallbackEmail || '',
+              email: prev.email || fallbackEmail || '',
+              plan: 'free'
+            }
+          : prev
+      );
+      return false;
+    }
+
+    const profileFromDb: UserProfile = {
+      ...defaultUserProfile,
+      displayName: data.display_name || fallbackDisplayName || fallbackEmail || '',
+      plan: data.plan || 'free',
+      sex: data.sex || '',
+      birthYear: data.birth_year ?? undefined,
+      heightCm: data.height_cm ?? undefined,
+      weightKg: data.weight_kg ?? undefined,
+      goal: data.goal || '',
+      level: data.level || '',
+      trainingDaysPerWeek: data.training_days_per_week ?? undefined,
+      sessionMinutes: data.session_minutes ?? undefined,
+      preferredStyle: data.preferred_style || '',
+      equipment: Array.isArray(data.equipment) ? data.equipment : [],
+      limitations: data.limitations || '',
+      measurements: data.measurements || {}
+    };
+
+    setUserProfile(profileFromDb);
+
+    setAuthUser(prev =>
+      prev
+        ? {
+            ...prev,
+            displayName:
+              profileFromDb.displayName || prev.displayName || fallbackDisplayName || fallbackEmail || '',
+            email: prev.email || fallbackEmail || '',
+            plan: profileFromDb.plan || 'free'
+          }
+        : {
+            id: userId,
+            displayName: profileFromDb.displayName || fallbackDisplayName || fallbackEmail || '',
+            email: fallbackEmail || '',
+            plan: profileFromDb.plan || 'free'
+          }
+    );
+
+    return true;
+  };
+
+  // carga inicial de workouts/routines desde localStorage + sesión Supabase + pesos desde Supabase
   useEffect(() => {
     const savedWorkouts = localStorage.getItem('titan_workouts');
     const savedRoutines = localStorage.getItem('titan_routines');
-    const savedWeight = localStorage.getItem('titan_weight_history');
-    const savedProfile = localStorage.getItem('titan_user_profile');
 
     if (savedWorkouts) {
       try {
         setWorkouts(JSON.parse(savedWorkouts));
-      } catch (e) {}
+      } catch (e) {
+        console.error('Error parseando workouts:', e);
+      }
     }
 
     if (savedRoutines) {
       try {
         setRoutines(JSON.parse(savedRoutines));
-      } catch (e) {}
+      } catch (e) {
+        console.error('Error parseando routines:', e);
+      }
     }
 
-    if (savedWeight) {
-      try {
-        setWeightRecords(JSON.parse(savedWeight));
-      } catch (e) {}
-    }
-
-    if (savedProfile) {
-      try {
-        const parsed = JSON.parse(savedProfile);
-        setUserProfile({
-          ...defaultUserProfile,
-          ...parsed,
-          measurements: {
-            ...defaultUserProfile.measurements,
-            ...(parsed.measurements || {})
-          }
-        });
-      } catch (e) {}
-    }
-
-    const loadSession = async () => {
+    const loadSessionAndData = async () => {
       const { data, error } = await supabase.auth.getSession();
 
       if (error) {
         console.error('Error obteniendo sesión:', error.message);
+        clearAuthState();
         return;
       }
 
@@ -185,50 +267,76 @@ const App: React.FC = () => {
 
         setAuthUser(sessionUser);
 
-        setUserProfile(prev => ({
-          ...defaultUserProfile,
-          ...prev,
-          displayName: sessionUser.displayName,
-          plan: sessionUser.plan,
-          measurements: {
-            ...defaultUserProfile.measurements,
-            ...(prev.measurements || {})
-          }
-        }));
+        await loadProfile(
+          user.id,
+          user.email || '',
+          (user.user_metadata?.display_name as string) || user.email || ''
+        );
+
+        // cargar pesos desde Supabase para este usuario
+        const { data: weightData, error: weightError } = await supabase
+          .from('weight_records')
+          .select('id, date, weight')
+          .order('date', { ascending: true });
+
+        if (weightError) {
+          console.error('Error cargando weight_records:', weightError.message);
+        } else if (weightData) {
+          const mapped: WeightRecord[] = weightData.map(row => ({
+            id: row.id,
+            date: row.date,
+            weight: Number(row.weight)
+          }));
+          setWeightRecords(mapped);
+        }
+      } else {
+        clearAuthState();
       }
     };
 
-    loadSession();
+    loadSessionAndData();
 
     const {
       data: { subscription }
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         const user = session.user;
+        const fallbackDisplayName =
+          (user.user_metadata?.display_name as string) || user.email || '';
+
         const sessionUser: AuthUser = {
           id: user.id,
-          displayName:
-            (user.user_metadata?.display_name as string) ||
-            user.email ||
-            '',
+          displayName: fallbackDisplayName,
           email: user.email || '',
           plan: 'free'
         };
 
         setAuthUser(sessionUser);
 
-        setUserProfile(prev => ({
-          ...defaultUserProfile,
-          ...prev,
-          displayName: sessionUser.displayName,
-          plan: sessionUser.plan,
-          measurements: {
-            ...defaultUserProfile.measurements,
-            ...(prev.measurements || {})
-          }
-        }));
+        await loadProfile(user.id, user.email || '', fallbackDisplayName);
+
+        // recargar pesos al cambiar de usuario / renovar token
+        const { data: weightData, error: weightError } = await supabase
+          .from('weight_records')
+          .select('id, date, weight')
+          .order('date', { ascending: true });
+
+        if (weightError) {
+          console.error('Error cargando weight_records (auth change):', weightError.message);
+        } else if (weightData) {
+          const mapped: WeightRecord[] = weightData.map(row => ({
+            id: row.id,
+            date: row.date,
+            weight: Number(row.weight)
+          }));
+          setWeightRecords(mapped);
+        }
+
+        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+          setIsAuthModalOpen(false);
+        }
       } else {
-        setAuthUser(null);
+        clearAuthState();
       }
     });
 
@@ -282,19 +390,15 @@ const App: React.FC = () => {
 
     setAuthUser(sessionUser);
 
-    const updatedProfile: UserProfile = {
-      ...defaultUserProfile,
-      ...userProfile,
-      displayName,
-      plan: 'free',
-      measurements: {
-        ...defaultUserProfile.measurements,
-        ...(userProfile.measurements || {})
-      }
-    };
-
-    setUserProfile(updatedProfile);
-    localStorage.setItem('titan_user_profile', JSON.stringify(updatedProfile));
+    if (data.user?.id) {
+      await loadProfile(data.user.id, data.user.email ?? email, displayName);
+    } else {
+      setUserProfile({
+        ...defaultUserProfile,
+        displayName,
+        plan: 'free'
+      });
+    }
 
     setTimeout(() => {
       setIsAuthModalOpen(false);
@@ -323,32 +427,25 @@ const App: React.FC = () => {
     }
 
     const user = data.user;
+    const fallbackDisplayName =
+      (user?.user_metadata?.display_name as string) ||
+      user?.email ||
+      '';
 
     const sessionUser: AuthUser = {
       id: user?.id ?? '',
-      displayName:
-        (user?.user_metadata?.display_name as string) ||
-        user?.email ||
-        '',
+      displayName: fallbackDisplayName,
       email: user?.email ?? email,
       plan: 'free'
     };
 
     setAuthUser(sessionUser);
 
-    const updatedProfile: UserProfile = {
-      ...defaultUserProfile,
-      ...userProfile,
-      displayName: sessionUser.displayName,
-      plan: sessionUser.plan,
-      measurements: {
-        ...defaultUserProfile.measurements,
-        ...(userProfile.measurements || {})
-      }
-    };
-
-    setUserProfile(updatedProfile);
-    localStorage.setItem('titan_user_profile', JSON.stringify(updatedProfile));
+    if (user?.id) {
+      await loadProfile(user.id, user.email ?? email, fallbackDisplayName);
+    } else {
+      setUserProfile(defaultUserProfile);
+    }
 
     setTimeout(() => {
       setIsAuthModalOpen(false);
@@ -365,10 +462,9 @@ const App: React.FC = () => {
 
     if (error) {
       console.error('Error cerrando sesión:', error.message);
-      return;
     }
 
-    setAuthUser(null);
+    clearAuthState();
   };
 
   const saveWorkout = (workout: Workout) => {
@@ -399,24 +495,53 @@ const App: React.FC = () => {
     localStorage.setItem('titan_routines', JSON.stringify(updated));
   };
 
-  const addWeightRecord = (weight: number) => {
+  const addWeightRecord = async (weight: number) => {
+    if (!authUser?.id) {
+      console.error('No hay usuario autenticado para guardar peso.');
+      return;
+    }
+
     const newRecord: WeightRecord = {
       id: Math.random().toString(36).slice(2, 11),
       date: new Date().toISOString(),
       weight
     };
-    const updated = [...weightRecords, newRecord];
-    setWeightRecords(updated);
-    localStorage.setItem('titan_weight_history', JSON.stringify(updated));
+
+    const { error } = await supabase.from('weight_records').insert({
+      id: newRecord.id,
+      user_id: authUser.id,
+      date: newRecord.date,
+      weight: newRecord.weight
+    });
+
+    if (error) {
+      console.error('Error guardando weight_record:', error.message);
+      return;
+    }
+
+    setWeightRecords(prev => [...prev, newRecord]);
   };
 
-  const deleteWeightRecord = (id: string) => {
-    const updated = weightRecords.filter(r => r.id !== id);
-    setWeightRecords(updated);
-    localStorage.setItem('titan_weight_history', JSON.stringify(updated));
+  const deleteWeightRecord = async (id: string) => {
+    const { error } = await supabase
+      .from('weight_records')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error eliminando weight_record:', error.message);
+      return;
+    }
+
+    setWeightRecords(prev => prev.filter(r => r.id !== id));
   };
 
-  const saveUserProfile = (profile: UserProfile) => {
+  const saveUserProfile = async (profile: UserProfile) => {
+    if (!authUser?.id) {
+      console.error('No hay usuario autenticado para guardar el perfil.');
+      return;
+    }
+
     const cleanedProfile: UserProfile = {
       ...defaultUserProfile,
       ...profile,
@@ -426,8 +551,40 @@ const App: React.FC = () => {
       }
     };
 
+    const { error } = await supabase.from('profiles').upsert({
+      id: authUser.id,
+      display_name: cleanedProfile.displayName || '',
+      plan: cleanedProfile.plan || 'free',
+      sex: cleanedProfile.sex || null,
+      birth_year: cleanedProfile.birthYear ?? null,
+      height_cm: cleanedProfile.heightCm ?? null,
+      weight_kg: cleanedProfile.weightKg ?? null,
+      goal: cleanedProfile.goal || null,
+      level: cleanedProfile.level || null,
+      training_days_per_week: cleanedProfile.trainingDaysPerWeek ?? null,
+      session_minutes: cleanedProfile.sessionMinutes ?? null,
+      preferred_style: cleanedProfile.preferredStyle || null,
+      equipment: cleanedProfile.equipment || [],
+      limitations: cleanedProfile.limitations || null,
+      measurements: cleanedProfile.measurements || {}
+    });
+
+    if (error) {
+      console.error('Error guardando profile:', error.message);
+      return;
+    }
+
     setUserProfile(cleanedProfile);
-    localStorage.setItem('titan_user_profile', JSON.stringify(cleanedProfile));
+
+    setAuthUser(prev =>
+      prev
+        ? {
+            ...prev,
+            displayName: cleanedProfile.displayName || prev.displayName,
+            plan: cleanedProfile.plan
+          }
+        : prev
+    );
   };
 
   const getViewTitle = () => {
@@ -553,8 +710,9 @@ const App: React.FC = () => {
           {currentView === View.RECS && (
             <Recommendations
               workouts={workouts}
+              profile={userProfile}
               isPro={isPro}
-              nutritionAppUrl={isInfinity ? 'https://TU-URL-FITMENU-AQUI.com' : undefined}
+              nutritionAppUrl={isInfinity ? 'https://fit-menu-ai.vercel.app/' : undefined}
             />
           )}
 

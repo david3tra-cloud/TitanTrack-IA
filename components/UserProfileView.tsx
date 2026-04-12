@@ -1,11 +1,5 @@
-import React from 'react';
-import {
-  UserProfile,
-  UserGoal,
-  UserLevel,
-  UserSex,
-  TrainingStyle
-} from '../types';
+import React, { useEffect, useState } from 'react';
+import { UserProfile } from '../types';
 
 interface UserProfileViewProps {
   profile: UserProfile;
@@ -13,56 +7,67 @@ interface UserProfileViewProps {
 }
 
 const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) => {
+  const [form, setForm] = useState<UserProfile>(profile);
+
+  // Cuando el perfil cambie desde fuera (Supabase), actualizamos el formulario
+  useEffect(() => {
+    setForm(profile);
+  }, [profile]);
+
   const handleChange =
     <K extends keyof UserProfile>(key: K) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
       const value = e.target.value;
-      onSave({
-        ...profile,
+      setForm(prev => ({
+        ...prev,
         [key]: value
-      });
+      }));
     };
 
   const handleNumberChange =
     <K extends keyof UserProfile>(key: K) =>
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const raw = e.target.value;
-      onSave({
-        ...profile,
+      setForm(prev => ({
+        ...prev,
         [key]: raw === '' ? undefined : Number(raw)
-      });
+      }));
     };
 
   const handleMeasurementChange =
     (key: keyof UserProfile['measurements']) =>
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const raw = e.target.value;
-      onSave({
-        ...profile,
+      setForm(prev => ({
+        ...prev,
         measurements: {
-          ...profile.measurements,
+          ...prev.measurements,
           [key]: raw === '' ? undefined : Number(raw)
         }
-      });
+      }));
     };
 
   const handleEquipmentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const raw = e.target.value;
     const items = raw
       .split(',')
-      .map((x) => x.trim())
+      .map(x => x.trim())
       .filter(Boolean);
 
-    onSave({
-      ...profile,
+    setForm(prev => ({
+      ...prev,
       equipment: items
-    });
+    }));
   };
 
-  const equipmentString = profile.equipment.join(', ');
+  const handleSubmit = () => {
+    onSave(form);
+  };
 
-  const isPro = profile.plan === 'pro' || profile.plan === 'infinity';
-  const isInfinity = profile.plan === 'infinity';
+  const equipmentString = form.equipment.join(', ');
+
+  const isPro = form.plan === 'pro' || form.plan === 'infinity';
+  const isInfinity = form.plan === 'infinity';
 
   return (
     <div className="space-y-8">
@@ -74,7 +79,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
               Perfil del usuario
             </p>
             <h3 className="text-2xl font-black uppercase tracking-tight text-white">
-              {profile.displayName || 'Sin nombre asignado'}
+              {form.displayName || 'Sin nombre asignado'}
             </h3>
           </div>
 
@@ -102,7 +107,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
               Nombre de perfil
               <input
                 type="text"
-                value={profile.displayName}
+                value={form.displayName}
                 onChange={handleChange('displayName')}
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-4 py-3 text-sm text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                 placeholder="Ej. David, Titan_01..."
@@ -114,7 +119,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
             <label className="block text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">
               Sexo
               <select
-                value={profile.sex}
+                value={form.sex}
                 onChange={handleChange('sex')}
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
               >
@@ -130,7 +135,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
               <input
                 type="number"
                 inputMode="numeric"
-                value={profile.birthYear ?? ''}
+                value={form.birthYear ?? ''}
                 onChange={handleNumberChange('birthYear')}
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                 placeholder="1976"
@@ -140,7 +145,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
             <label className="block text-[10px] font-black uppercase tracking-[0.25em] text-slate-400">
               Objetivo
               <select
-                value={profile.goal}
+                value={form.goal}
                 onChange={handleChange('goal')}
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
               >
@@ -162,7 +167,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
               <input
                 type="number"
                 inputMode="decimal"
-                value={profile.weightKg ?? ''}
+                value={form.weightKg ?? ''}
                 onChange={handleNumberChange('weightKg')}
                 className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                 placeholder="85"
@@ -177,7 +182,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
               <input
                 type="number"
                 inputMode="decimal"
-                value={profile.heightCm ?? ''}
+                value={form.heightCm ?? ''}
                 onChange={handleNumberChange('heightCm')}
                 className="w-full rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-white outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                 placeholder="178"
@@ -185,6 +190,16 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
               <span className="text-[10px] text-slate-500">cm</span>
             </div>
           </label>
+        </div>
+
+        <div className="mt-6 flex justify-end">
+          <button
+            type="button"
+            onClick={handleSubmit}
+            className="rounded-2xl bg-gradient-to-r from-cyan-500 to-blue-600 px-6 py-3 text-[10px] font-black uppercase tracking-[0.3em] text-black shadow-[0_0_24px_rgba(0,242,255,0.7)] active:scale-[0.97] transition-transform"
+          >
+            Guardar cambios
+          </button>
         </div>
       </section>
 
@@ -252,7 +267,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
             <label className="block text-[10px] font-black uppercase tracking-[0.25em] text-slate-300">
               Nivel
               <select
-                value={profile.level}
+                value={form.level}
                 onChange={handleChange('level')}
                 disabled={!isPro}
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-slate-100 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
@@ -270,7 +285,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
                 type="number"
                 inputMode="numeric"
                 disabled={!isPro}
-                value={profile.sessionMinutes ?? ''}
+                value={form.sessionMinutes ?? ''}
                 onChange={handleNumberChange('sessionMinutes')}
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-slate-100 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                 placeholder="45 - 75"
@@ -287,7 +302,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
             <label className="block text-[10px] font-black uppercase tracking-[0.25em] text-slate-300">
               Estilo
               <select
-                value={profile.preferredStyle}
+                value={form.preferredStyle}
                 onChange={handleChange('preferredStyle')}
                 disabled={!isPro}
                 className="mt-2 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-slate-100 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
@@ -325,7 +340,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
               <textarea
                 rows={3}
                 disabled={!isPro}
-                value={profile.limitations}
+                value={form.limitations}
                 onChange={handleChange('limitations')}
                 className="mt-2 w-full resize-none rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-3 text-xs text-slate-100 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                 placeholder="Hombro, rodilla, espalda..."
@@ -339,7 +354,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
                   type="number"
                   inputMode="decimal"
                   disabled={!isPro}
-                  value={profile.measurements.chestCm ?? ''}
+                  value={form.measurements.chestCm ?? ''}
                   onChange={handleMeasurementChange('chestCm')}
                   className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-2 py-2 text-[10px] text-slate-100 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                   placeholder="cm"
@@ -352,7 +367,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
                   type="number"
                   inputMode="decimal"
                   disabled={!isPro}
-                  value={profile.measurements.waistCm ?? ''}
+                  value={form.measurements.waistCm ?? ''}
                   onChange={handleMeasurementChange('waistCm')}
                   className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-2 py-2 text-[10px] text-slate-100 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                   placeholder="cm"
@@ -365,7 +380,7 @@ const UserProfileView: React.FC<UserProfileViewProps> = ({ profile, onSave }) =>
                   type="number"
                   inputMode="decimal"
                   disabled={!isPro}
-                  value={profile.measurements.hipsCm ?? ''}
+                  value={form.measurements.hipsCm ?? ''}
                   onChange={handleMeasurementChange('hipsCm')}
                   className="mt-1 w-full rounded-2xl border border-white/10 bg-slate-900/60 px-2 py-2 text-[10px] text-slate-100 outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500"
                   placeholder="cm"
