@@ -17,7 +17,6 @@ import WeightTracker from './components/WeightTracker';
 import ExerciseLibrary from './components/ExerciseLibrary';
 import UserProfileView from './components/UserProfileView';
 import { supabase } from './src/lib/supabaseClient';
-import { Analytics } from '@vercel/analytics/react';
 
 const defaultUserProfile: UserProfile = {
   displayName: '',
@@ -958,7 +957,6 @@ const App: React.FC = () => {
         </div>
       )}
 
-      <Analytics />
     </div>
   );
 };
