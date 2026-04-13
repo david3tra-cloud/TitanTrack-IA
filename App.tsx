@@ -119,6 +119,13 @@ const App: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
 
+  const [pendingProfileLoad, setPendingProfileLoad] = useState<{
+    id: string;
+    email: string;
+    name: string;
+    closeModal?: boolean;
+  } | null>(null);
+
   const isPro = userProfile.plan === 'pro' || userProfile.plan === 'infinity';
   const isInfinity = userProfile.plan === 'infinity';
   const isLoggedIn = !!authUser;
@@ -129,7 +136,9 @@ const App: React.FC = () => {
     setCurrentView(View.DASHBOARD);
     setShowLogger(false);
     setIsFabMenuOpen(false);
-    setWeightRecords([]); // limpiamos peso al cerrar sesión
+    setWeightRecords([]);
+    setWorkouts([]);
+    setRoutines([]);
   };
 
   const loadProfile = async (
@@ -221,27 +230,43 @@ const App: React.FC = () => {
     return true;
   };
 
-  // carga inicial de workouts/routines desde localStorage + sesión Supabase + pesos desde Supabase
+  // Carga de perfil + pesos cuando pendingProfileLoad cambia
   useEffect(() => {
-    const savedWorkouts = localStorage.getItem('titan_workouts');
-    const savedRoutines = localStorage.getItem('titan_routines');
+    if (!pendingProfileLoad) return;
 
-    if (savedWorkouts) {
-      try {
-        setWorkouts(JSON.parse(savedWorkouts));
-      } catch (e) {
-        console.error('Error parseando workouts:', e);
+    const run = async () => {
+      const { id, email, name, closeModal } = pendingProfileLoad;
+
+      await loadProfile(id, email, name);
+
+      const { data: weightData, error: weightError } = await supabase
+        .from('weight_records')
+        .select('id, date, weight')
+        .order('date', { ascending: true });
+
+      if (weightError) {
+        console.error('Error cargando weight_records (profile load):', weightError.message);
+      } else if (weightData) {
+        const mapped: WeightRecord[] = weightData.map(row => ({
+          id: row.id,
+          date: row.date,
+          weight: Number(row.weight)
+        }));
+        setWeightRecords(mapped);
       }
-    }
 
-    if (savedRoutines) {
-      try {
-        setRoutines(JSON.parse(savedRoutines));
-      } catch (e) {
-        console.error('Error parseando routines:', e);
+      if (closeModal) {
+        setIsAuthModalOpen(false);
       }
-    }
 
+      setPendingProfileLoad(null);
+    };
+
+    run();
+  }, [pendingProfileLoad]);
+
+  // Carga inicial: sesión + workouts + routines
+  useEffect(() => {
     const loadSessionAndData = async () => {
       const { data, error } = await supabase.auth.getSession();
 
@@ -253,52 +278,6 @@ const App: React.FC = () => {
 
       const session = data.session;
 
-      if (session?.user) {
-        const user = session.user;
-        const sessionUser: AuthUser = {
-          id: user.id,
-          displayName:
-            (user.user_metadata?.display_name as string) ||
-            user.email ||
-            '',
-          email: user.email || '',
-          plan: 'free'
-        };
-
-        setAuthUser(sessionUser);
-
-        await loadProfile(
-          user.id,
-          user.email || '',
-          (user.user_metadata?.display_name as string) || user.email || ''
-        );
-
-        // cargar pesos desde Supabase para este usuario
-        const { data: weightData, error: weightError } = await supabase
-          .from('weight_records')
-          .select('id, date, weight')
-          .order('date', { ascending: true });
-
-        if (weightError) {
-          console.error('Error cargando weight_records:', weightError.message);
-        } else if (weightData) {
-          const mapped: WeightRecord[] = weightData.map(row => ({
-            id: row.id,
-            date: row.date,
-            weight: Number(row.weight)
-          }));
-          setWeightRecords(mapped);
-        }
-      } else {
-        clearAuthState();
-      }
-    };
-
-    loadSessionAndData();
-
-    const {
-      data: { subscription }
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
         const user = session.user;
         const fallbackDisplayName =
@@ -313,30 +292,82 @@ const App: React.FC = () => {
 
         setAuthUser(sessionUser);
 
-        await loadProfile(user.id, user.email || '', fallbackDisplayName);
+        setPendingProfileLoad({
+          id: user.id,
+          email: user.email || '',
+          name: fallbackDisplayName
+        });
 
-        // recargar pesos al cambiar de usuario / renovar token
-        const { data: weightData, error: weightError } = await supabase
-          .from('weight_records')
-          .select('id, date, weight')
+        // Cargar workouts del usuario
+        const { data: workoutsData, error: workoutsError } = await supabase
+          .from('workouts')
+          .select('id, name, date, data')
+          .eq('user_id', user.id)
           .order('date', { ascending: true });
 
-        if (weightError) {
-          console.error('Error cargando weight_records (auth change):', weightError.message);
-        } else if (weightData) {
-          const mapped: WeightRecord[] = weightData.map(row => ({
+        if (workoutsError) {
+          console.error('Error cargando workouts:', workoutsError.message);
+        } else if (workoutsData) {
+          const mappedWorkouts: Workout[] = workoutsData.map(row => ({
             id: row.id,
+            name: row.name,
             date: row.date,
-            weight: Number(row.weight)
+            ...(row.data as any)
           }));
-          setWeightRecords(mapped);
+          setWorkouts(mappedWorkouts);
         }
 
-        if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
-          setIsAuthModalOpen(false);
+        // Cargar routines del usuario
+        const { data: routinesData, error: routinesError } = await supabase
+          .from('routines')
+          .select('id, name, description, data')
+          .eq('user_id', user.id)
+          .order('created_at', { ascending: true });
+
+        if (routinesError) {
+          console.error('Error cargando routines:', routinesError.message);
+        } else if (routinesData) {
+          const mappedRoutines: Routine[] = routinesData.map(row => ({
+            id: row.id,
+            name: row.name,
+            description: row.description || '',
+            ...(row.data as any)
+          }));
+          setRoutines(mappedRoutines);
         }
       } else {
         clearAuthState();
+      }
+    };
+
+    loadSessionAndData();
+
+    const {
+      data: { subscription }
+    } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session?.user) {
+        const user = session.user;
+        const fallbackDisplayName =
+          (user.user_metadata?.display_name as string) || user.email || '';
+
+        const sessionUser: AuthUser = {
+          id: user.id,
+          displayName: fallbackDisplayName,
+          email: user.email || '',
+          plan: 'free'
+        };
+
+        setAuthUser(sessionUser);
+
+        setPendingProfileLoad({
+          id: user.id,
+          email: user.email || '',
+          name: fallbackDisplayName,
+          closeModal: event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED'
+        });
+      } else {
+        clearAuthState();
+        setPendingProfileLoad(null);
       }
     });
 
@@ -467,80 +498,148 @@ const App: React.FC = () => {
     clearAuthState();
   };
 
-  const saveWorkout = (workout: Workout) => {
-    const updated = [...workouts, workout];
-    setWorkouts(updated);
-    localStorage.setItem('titan_workouts', JSON.stringify(updated));
+  // guardar workout en Supabase
+  const saveWorkout = async (workout: Workout) => {
+    if (!authUser?.id) {
+      console.error('No hay usuario autenticado para guardar workout.');
+      return;
+    }
+
+    const workoutId = workout.id || Math.random().toString(36).slice(2, 11);
+
+    const workoutToSave: Workout = {
+      ...workout,
+      id: workoutId
+    };
+
+    const { error } = await supabase.from('workouts').insert({
+      id: workoutToSave.id,
+      user_id: authUser.id,
+      name: workoutToSave.name,
+      date: workoutToSave.date,
+      data: workoutToSave
+    });
+
+    if (error) {
+      console.error('Error guardando workout:', error.message);
+      return;
+    }
+
+    setWorkouts(prev => [...prev, workoutToSave]);
     setShowLogger(false);
   };
 
-  const saveRoutine = (routine: Routine) => {
-    const exists = routines.findIndex(r => r.id === routine.id);
-    let updated: Routine[];
-
-    if (exists >= 0) {
-      updated = [...routines];
-      updated[exists] = routine;
-    } else {
-      updated = [...routines, routine];
+  // guardar/actualizar rutina en Supabase
+  const saveRoutine = async (routine: Routine) => {
+    if (!authUser?.id) {
+      console.error('No hay usuario autenticado para guardar rutina.');
+      return;
     }
 
-    setRoutines(updated);
-    localStorage.setItem('titan_routines', JSON.stringify(updated));
+    const routineId = routine.id || Math.random().toString(36).slice(2, 11);
+    const routineToSave: Routine = {
+      ...routine,
+      id: routineId
+    };
+
+    const exists = routines.find(r => r.id === routineId);
+
+    if (exists) {
+      const { error } = await supabase
+        .from('routines')
+        .update({
+          name: routineToSave.name,
+          description: (routineToSave as any).description || null,
+          data: routineToSave
+        })
+        .eq('id', routineId)
+        .eq('user_id', authUser.id);
+
+      if (error) {
+        console.error('Error actualizando rutina:', error.message);
+        return;
+      }
+
+      setRoutines(prev =>
+        prev.map(r => (r.id === routineId ? routineToSave : r))
+      );
+    } else {
+      const { error } = await supabase.from('routines').insert({
+        id: routineToSave.id,
+        user_id: authUser.id,
+        name: routineToSave.name,
+        description: (routineToSave as any).description || null,
+        data: routineToSave
+      });
+
+      if (error) {
+        console.error('Error creando rutina:', error.message);
+        return;
+      }
+
+      setRoutines(prev => [...prev, routineToSave]);
+    }
   };
 
-  const deleteRoutine = (id: string) => {
-    const updated = routines.filter(r => r.id !== id);
-    setRoutines(updated);
-    localStorage.setItem('titan_routines', JSON.stringify(updated));
+  // borrar rutina en Supabase
+  const deleteRoutine = async (id: string) => {
+    if (!authUser?.id) {
+      console.error('No hay usuario autenticado para borrar rutina.');
+      return;
+    }
+
+    const { error } = await supabase
+      .from('routines')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', authUser.id);
+
+    if (error) {
+      console.error('Error eliminando rutina:', error.message);
+      return;
+    }
+
+    setRoutines(prev => prev.filter(r => r.id !== id));
   };
 
-    const addWeightRecord = async (weight: number) => {
-  alert('Entró en addWeightRecord');
-  console.log('Entró en addWeightRecord');
+  // addWeightRecord SIN alerts
+  const addWeightRecord = async (weight: number) => {
+    console.log('Entró en addWeightRecord');
 
-  if (!authUser?.id) {
-    console.error('No hay usuario autenticado para guardar peso.');
-    alert('No hay authUser.id');
-    return;
-  }
+    if (!authUser?.id) {
+      console.error('No hay usuario autenticado para guardar peso.');
+      return;
+    }
 
-  console.log('authUser.id:', authUser.id);
+    console.log('authUser.id:', authUser.id);
 
-  const { data: authData, error: authError } = await supabase.auth.getUser();
-  console.log('supabase.auth.getUser():', authData, authError);
-  alert(`Supabase user: ${authData.user?.id ?? 'undefined'}`);
+    const newRecord: WeightRecord = {
+      id: Math.random().toString(36).slice(2, 11),
+      date: new Date().toISOString(),
+      weight
+    };
 
-  const newRecord: WeightRecord = {
-    id: Math.random().toString(36).slice(2, 11),
-    date: new Date().toISOString(),
-    weight
+    console.log('newRecord:', newRecord);
+
+    const { data, error } = await supabase
+      .from('weight_records')
+      .insert({
+        id: newRecord.id,
+        user_id: authUser.id,
+        date: newRecord.date,
+        weight: newRecord.weight
+      })
+      .select();
+
+    console.log('Resultado insert:', data, error);
+
+    if (error) {
+      console.error('Error guardando weight_record:', error);
+      return;
+    }
+
+    setWeightRecords(prev => [...prev, newRecord]);
   };
-
-  console.log('newRecord:', newRecord);
-  alert('Antes del insert');
-
-  const { data, error } = await supabase
-    .from('weight_records')
-    .insert({
-      id: newRecord.id,
-      user_id: authUser.id,
-      date: newRecord.date,
-      weight: newRecord.weight
-    })
-    .select();
-
-  console.log('Resultado insert:', data, error);
-
-  if (error) {
-    console.error('Error guardando weight_record:', error);
-    alert(`Error guardando peso: ${error.message}`);
-    return;
-  }
-
-  alert('Insert OK');
-  setWeightRecords(prev => [...prev, newRecord]);
-};
 
   const deleteWeightRecord = async (id: string) => {
     const { error } = await supabase
@@ -689,7 +788,7 @@ const App: React.FC = () => {
 
             <p className="text-slate-600 text-[10px] font-black uppercase tracking-[0.4em] mt-3 flex items-center gap-2">
               <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_8px_#10b981]" />
-              SYSTEM_READY:{' '}
+              SYSTEM_READY{' '}
               {new Date()
                 .toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })
                 .toUpperCase()}
