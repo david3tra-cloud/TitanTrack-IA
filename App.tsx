@@ -17,6 +17,7 @@ import WeightTracker from './components/WeightTracker';
 import ExerciseLibrary from './components/ExerciseLibrary';
 import UserProfileView from './components/UserProfileView';
 import { supabase } from './src/lib/supabaseClient';
+import { Analytics } from '@vercel/analytics/react';
 
 const defaultUserProfile: UserProfile = {
   displayName: '',
@@ -604,14 +605,10 @@ const App: React.FC = () => {
 
   // addWeightRecord SIN alerts
   const addWeightRecord = async (weight: number) => {
-    console.log('Entró en addWeightRecord');
-
     if (!authUser?.id) {
       console.error('No hay usuario autenticado para guardar peso.');
       return;
     }
-
-    console.log('authUser.id:', authUser.id);
 
     const newRecord: WeightRecord = {
       id: Math.random().toString(36).slice(2, 11),
@@ -619,19 +616,14 @@ const App: React.FC = () => {
       weight
     };
 
-    console.log('newRecord:', newRecord);
-
-    const { data, error } = await supabase
+    const { error } = await supabase
       .from('weight_records')
       .insert({
         id: newRecord.id,
         user_id: authUser.id,
         date: newRecord.date,
         weight: newRecord.weight
-      })
-      .select();
-
-    console.log('Resultado insert:', data, error);
+      });
 
     if (error) {
       console.error('Error guardando weight_record:', error);
@@ -797,7 +789,7 @@ const App: React.FC = () => {
 
           <button
             onClick={() => setShowLogger(true)}
-            className="group relative px-8 py-5 bg-transparent text-white font-black text-xs uppercase tracking-[0.3em] transition-all overflow-hidden w-full md:w-auto text-center"
+            className="group relative px-8 py-5 bg-transparent text-white font-black text-xs uppercase tracking-[0.3em] transition-all overflow-hidden w-full md:w-auto textcenter"
           >
             <div className="absolute inset-0 border border-cyan-500/40 rounded-2xl group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(0,242,255,0.4)] transition-all" />
             <div className="absolute inset-x-0 bottom-0 h-1.5 bg-gradient-to-r from-cyan-500 via-blue-600 to-fuchsia-500 opacity-60" />
@@ -884,7 +876,7 @@ const App: React.FC = () => {
 
       {isFabMenuOpen && (
         <div
-          className="md:hidden fixed inset-0 z-30 bg-black/60 backdrop-blur-sm flex items-end"
+          className="md:hidden fixed inset-0 z-30 bg-black/60 backdrop-blur-sm flex itemsend"
           onClick={() => setIsFabMenuOpen(false)}
         >
           <div
@@ -965,6 +957,8 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      <Analytics />
     </div>
   );
 };
