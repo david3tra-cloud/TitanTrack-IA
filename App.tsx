@@ -230,7 +230,6 @@ const App: React.FC = () => {
     return true;
   };
 
-  // Carga de perfil + pesos cuando pendingProfileLoad cambia
   useEffect(() => {
     if (!pendingProfileLoad) return;
 
@@ -265,7 +264,6 @@ const App: React.FC = () => {
     run();
   }, [pendingProfileLoad]);
 
-  // Carga inicial: sesión + workouts + routines
   useEffect(() => {
     const loadSessionAndData = async () => {
       const { data, error } = await supabase.auth.getSession();
@@ -298,7 +296,6 @@ const App: React.FC = () => {
           name: fallbackDisplayName
         });
 
-        // Cargar workouts del usuario
         const { data: workoutsData, error: workoutsError } = await supabase
           .from('workouts')
           .select('id, name, date, data')
@@ -317,7 +314,6 @@ const App: React.FC = () => {
           setWorkouts(mappedWorkouts);
         }
 
-        // Cargar routines del usuario
         const { data: routinesData, error: routinesError } = await supabase
           .from('routines')
           .select('id, name, description, data')
@@ -498,7 +494,6 @@ const App: React.FC = () => {
     clearAuthState();
   };
 
-  // guardar workout en Supabase
   const saveWorkout = async (workout: Workout) => {
     if (!authUser?.id) {
       console.error('No hay usuario autenticado para guardar workout.');
@@ -529,7 +524,6 @@ const App: React.FC = () => {
     setShowLogger(false);
   };
 
-  // guardar/actualizar rutina en Supabase
   const saveRoutine = async (routine: Routine) => {
     if (!authUser?.id) {
       console.error('No hay usuario autenticado para guardar rutina.');
@@ -581,7 +575,6 @@ const App: React.FC = () => {
     }
   };
 
-  // borrar rutina en Supabase
   const deleteRoutine = async (id: string) => {
     if (!authUser?.id) {
       console.error('No hay usuario autenticado para borrar rutina.');
@@ -602,7 +595,6 @@ const App: React.FC = () => {
     setRoutines(prev => prev.filter(r => r.id !== id));
   };
 
-  // addWeightRecord SIN alerts
   const addWeightRecord = async (weight: number) => {
     if (!authUser?.id) {
       console.error('No hay usuario autenticado para guardar peso.');
@@ -788,7 +780,7 @@ const App: React.FC = () => {
 
           <button
             onClick={() => setShowLogger(true)}
-            className="group relative px-8 py-5 bg-transparent text-white font-black text-xs uppercase tracking-[0.3em] transition-all overflow-hidden w-full md:w-auto textcenter"
+            className="group relative px-8 py-5 bg-transparent text-white font-black text-xs uppercase tracking-[0.3em] transition-all overflow-hidden w-full md:w-auto text-center"
           >
             <div className="absolute inset-0 border border-cyan-500/40 rounded-2xl group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(0,242,255,0.4)] transition-all" />
             <div className="absolute inset-x-0 bottom-0 h-1.5 bg-gradient-to-r from-cyan-500 via-blue-600 to-fuchsia-500 opacity-60" />
@@ -875,22 +867,38 @@ const App: React.FC = () => {
 
       {isFabMenuOpen && (
         <div
-          className="md:hidden fixed inset-0 z-30 bg-black/60 backdrop-blur-sm flex itemsend"
+          className="md:hidden fixed inset-0 z-30 bg-black/60 backdrop-blur-sm flex items-end"
           onClick={() => setIsFabMenuOpen(false)}
         >
           <div
-            className="w-full bg-slate-900 rounded-t-3xl border-t border-white/10 p-6 pb-10 mb-20"
+            className="w-full bg-slate-900 rounded-t-3xl border-t border-white/10 px-5 pt-6 pb-[max(2.5rem,env(safe-area-inset-bottom))]"
             onClick={e => e.stopPropagation()}
           >
-            <div className="grid grid-cols-3 gap-4 text-[10px] font-black uppercase tracking-[0.25em] text-slate-300">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="text-xs font-black uppercase tracking-[0.35em] text-slate-500">
+                Navegación rápida
+              </div>
+              <button
+                onClick={() => setIsFabMenuOpen(false)}
+                className="w-10 h-10 rounded-full border border-white/10 bg-white/5 text-slate-300 flex items-center justify-center"
+                aria-label="Cerrar menú rápido"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 text-center">
               <button
                 onClick={() => {
                   setCurrentView(View.DASHBOARD);
                   setIsFabMenuOpen(false);
                 }}
+                className="min-h-[84px] rounded-2xl border border-white/10 bg-black/20 px-2 py-3 flex flex-col items-center justify-center gap-2 text-slate-200 active:scale-95 transition-transform"
               >
-                <div className="text-2xl mb-1">🔋</div>
-                <div>Resumen</div>
+                <div className="text-2xl leading-none">🔋</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] leading-tight">
+                  Resumen
+                </div>
               </button>
 
               <button
@@ -898,9 +906,12 @@ const App: React.FC = () => {
                   setCurrentView(View.LOG);
                   setIsFabMenuOpen(false);
                 }}
+                className="min-h-[84px] rounded-2xl border border-white/10 bg-black/20 px-2 py-3 flex flex-col items-center justify-center gap-2 text-slate-200 active:scale-95 transition-transform"
               >
-                <div className="text-2xl mb-1">📁</div>
-                <div>Entrenos</div>
+                <div className="text-2xl leading-none">📁</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] leading-tight">
+                  Entrenos
+                </div>
               </button>
 
               <button
@@ -908,9 +919,12 @@ const App: React.FC = () => {
                   setCurrentView(View.ROUTINES);
                   setIsFabMenuOpen(false);
                 }}
+                className="min-h-[84px] rounded-2xl border border-white/10 bg-black/20 px-2 py-3 flex flex-col items-center justify-center gap-2 text-slate-200 active:scale-95 transition-transform"
               >
-                <div className="text-2xl mb-1">📀</div>
-                <div>Rutinas</div>
+                <div className="text-2xl leading-none">📀</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] leading-tight">
+                  Rutinas
+                </div>
               </button>
 
               <button
@@ -918,9 +932,12 @@ const App: React.FC = () => {
                   setCurrentView(View.EXERCISES);
                   setIsFabMenuOpen(false);
                 }}
+                className="min-h-[84px] rounded-2xl border border-white/10 bg-black/20 px-2 py-3 flex flex-col items-center justify-center gap-2 text-slate-200 active:scale-95 transition-transform"
               >
-                <div className="text-2xl mb-1">📘</div>
-                <div>Biblioteca</div>
+                <div className="text-2xl leading-none">📘</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] leading-tight">
+                  Biblioteca
+                </div>
               </button>
 
               <button
@@ -928,9 +945,12 @@ const App: React.FC = () => {
                   setCurrentView(View.PROGRESS);
                   setIsFabMenuOpen(false);
                 }}
+                className="min-h-[84px] rounded-2xl border border-white/10 bg-black/20 px-2 py-3 flex flex-col items-center justify-center gap-2 text-slate-200 active:scale-95 transition-transform"
               >
-                <div className="text-2xl mb-1">📊</div>
-                <div>Perfil</div>
+                <div className="text-2xl leading-none">📊</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] leading-tight">
+                  Perfil
+                </div>
               </button>
 
               <button
@@ -938,9 +958,12 @@ const App: React.FC = () => {
                   setCurrentView(View.WEIGHT);
                   setIsFabMenuOpen(false);
                 }}
+                className="min-h-[84px] rounded-2xl border border-white/10 bg-black/20 px-2 py-3 flex flex-col items-center justify-center gap-2 text-slate-200 active:scale-95 transition-transform"
               >
-                <div className="text-2xl mb-1">⚖️</div>
-                <div>Peso</div>
+                <div className="text-2xl leading-none">⚖️</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] leading-tight">
+                  Peso
+                </div>
               </button>
 
               <button
@@ -948,15 +971,17 @@ const App: React.FC = () => {
                   setCurrentView(View.RECS);
                   setIsFabMenuOpen(false);
                 }}
+                className="min-h-[84px] rounded-2xl border border-cyan-500/30 bg-cyan-500/10 px-2 py-3 flex flex-col items-center justify-center gap-2 text-cyan-300 active:scale-95 transition-transform"
               >
-                <div className="text-2xl mb-1">🧠</div>
-                <div>Coach IA</div>
+                <div className="text-2xl leading-none">🧠</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] leading-tight">
+                  Coach IA
+                </div>
               </button>
             </div>
           </div>
         </div>
       )}
-
     </div>
   );
 };
