@@ -198,7 +198,7 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onSave, onCancel, routine
           </p>
         </div>
         <button
-          onClick={handleCancel}
+          onClick={onCancel}
           className="w-10 h-10 rounded-full border border-white/10 bg-white/5 text-slate-400 hover:text-white hover:border-white/30 flex items-center justify-center transition-all text-lg"
         >
           ✕
