@@ -38,6 +38,7 @@ export interface RoutineExercise {
   sets: number;
   reps: string;
   restTime: string;
+    dayNumber?: number;
 }
 
 export interface Routine {
