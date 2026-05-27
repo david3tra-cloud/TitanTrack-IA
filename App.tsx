@@ -17,6 +17,7 @@ import WeightTracker from './components/WeightTracker';
 import ExerciseLibrary from './components/ExerciseLibrary';
 import UserProfileView from './components/UserProfileView';
 import { supabase } from './src/lib/supabaseClient';
+import { Analytics } from '@vercel/analytics/react';
 
 const defaultUserProfile: UserProfile = {
   displayName: '',
@@ -733,6 +734,7 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen pt-32 md:pt-24 pb-32 relative overflow-x-hidden">
+      <Analytics />
       <div className="fixed top-0 left-1/4 w-96 h-96 bg-cyan-500/10 blur-[120px] rounded-full -z-10 animate-pulse" />
       <div
         className="fixed bottom-0 right-1/4 w-96 h-96 bg-fuchsia-500/10 blur-[120px] rounded-full -z-10 animate-pulse"
