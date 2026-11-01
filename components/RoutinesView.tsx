@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Routine, RoutineExercise } from '../types';
 import { INITIAL_EXERCISES } from '../constants';
-import { generateRoutineGroq } from '../services/aiService';
+import { generateRoutineGroq } from '../services/aiService.edge';
 
 interface RoutinesViewProps {
   routines: Routine[];
@@ -9,6 +9,18 @@ interface RoutinesViewProps {
   onDeleteRoutine: (id: string) => void;
   isLoggedIn: boolean;
   isPro: boolean;
+}
+
+export function isRoutinePilotEnabled(
+  isDevelopment: boolean,
+  pilotFlag: string | undefined,
+  origin: string | undefined
+): boolean {
+  return (
+    isDevelopment &&
+    pilotFlag === 'true' &&
+    origin === 'http://localhost:3001'
+  );
 }
 
 const RoutinesView: React.FC<RoutinesViewProps> = ({
@@ -20,9 +32,16 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<'list' | 'ai' | 'manual'>('list');
   const [isGeneratingBasic, setIsGeneratingBasic] = useState(false);
-  const [isGeneratingPro, setIsGeneratingPro] = useState(false);
+  const [pilotRoutine, setPilotRoutine] = useState<Routine | null>(null);
+  const [routinePilotError, setRoutinePilotError] = useState<string | null>(null);
+  const routinePilotRequestInFlight = useRef(false);
   const [expandedRoutines, setExpandedRoutines] = useState<Record<string, boolean>>({});
   const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, string | null>>({});
+  const routinePilotEnabled = isRoutinePilotEnabled(
+    import.meta.env.DEV === true,
+    import.meta.env.VITE_AI_ROUTINE_PILOT,
+    typeof window === 'undefined' ? undefined : window.location.origin
+  );
 
   const [aiDays, setAiDays] = useState('3 días');
   const [aiObjective, setAiObjective] = useState('Crecimiento muscular');
@@ -100,12 +119,6 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
     setEditingId(null);
   };
 
-  const getDayCountFromText = (value?: string) => {
-    const parsed = parseInt(value || '', 10);
-    if (Number.isNaN(parsed) || parsed <= 0) return 3;
-    return Math.min(parsed, 7);
-  };
-
   const getPlanDayCount = (routine: Routine) => {
     const desc = routine.description || '';
     const match = desc.match(/\[PLAN_DAYS:(\d+)\]/i);
@@ -116,70 +129,41 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
     return 3;
   };
 
-  const buildPlanDescription = (baseDescription?: string, dayCount?: number) => {
-    const cleanBase = (baseDescription || '').replace(/\[PLAN_DAYS:\d+\]/gi, '').trim();
-    return `${cleanBase ? `${cleanBase} ` : ''}[PLAN_DAYS:${dayCount}]`.trim();
-  };
-
   const handleAiGenerateBasic = async () => {
-    if (!isLoggedIn) return;
+    if (
+      !routinePilotEnabled ||
+      !isLoggedIn ||
+      routinePilotRequestInFlight.current
+    ) return;
+    if (!window.confirm(
+      'Esta prueba usa parámetros ficticios. Contactará con IA y puede consumir cuota. ¿Deseas continuar?'
+    )) return;
 
+    routinePilotRequestInFlight.current = true;
     setIsGeneratingBasic(true);
+    setRoutinePilotError(null);
     try {
       const newRoutine = await generateRoutineGroq({
-        daysPerWeek: aiDays,
-        objective: aiObjective,
-        level: aiLevel,
-        equipment: aiEquipment
+        daysPerWeek: '3 días',
+        objective: 'Fuerza general',
+        level: 'Principiante',
+        equipment: 'Mancuernas',
+        mode: 'basic',
+        sessionMinutes: 45,
       });
 
-      onSaveRoutine(newRoutine);
-      setActiveTab('list');
-    } catch (err) {
-      alert('Error generando rutina. Revisa tu conexión.');
+      setPilotRoutine(newRoutine);
+    } catch {
+      setRoutinePilotError(
+        'No se pudo completar la prueba de rutina. No se guardó ni se reintentó.'
+      );
     } finally {
+      routinePilotRequestInFlight.current = false;
       setIsGeneratingBasic(false);
     }
   };
 
-  const handleAiGeneratePro = async () => {
-    if (!isLoggedIn) return;
-    if (!isPro) {
-      alert('Esta función está disponible solo para Titan PRO.');
-      return;
-    }
-
-    setIsGeneratingPro(true);
-    try {
-      const requestedDayCount = getDayCountFromText(aiDays);
-
-      const generatedRoutine = await generateRoutineGroq({
-        daysPerWeek: aiDays,
-        objective: aiObjective,
-        level: aiLevel,
-        equipment: aiEquipment,
-        mode: 'pro_plan'
-      } as any);
-
-      const weeklyPlanRoutine: Routine = {
-        ...generatedRoutine,
-        name: generatedRoutine.name.toUpperCase().startsWith('PLAN SEMANAL')
-          ? generatedRoutine.name
-          : `PLAN SEMANAL ${generatedRoutine.name}`,
-        description: buildPlanDescription(
-          generatedRoutine.description || `Plan semanal de ${requestedDayCount} días`,
-          requestedDayCount
-        )
-      };
-
-      onSaveRoutine(weeklyPlanRoutine);
-      setActiveTab('list');
-    } catch (err) {
-      alert('Error generando plan PRO. Revisa tu conexión.');
-    } finally {
-      setIsGeneratingPro(false);
-    }
-  };
+  const handleAiGeneratePro = () => undefined;
 
   const isWeeklyPlan = (routine: Routine) =>
     routine.name.trim().toUpperCase().startsWith('PLAN SEMANAL');
@@ -573,14 +557,14 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
 
               <button
                 onClick={handleAiGenerateBasic}
-                disabled={isGeneratingBasic}
+                disabled={!routinePilotEnabled || !isLoggedIn || isGeneratingBasic}
                 className="w-full py-5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 disabled:opacity-20 text-white rounded-[24px] font-black italic uppercase tracking-[0.2em] shadow-[0_10px_30px_rgba(0,242,255,0.3)] transition-all flex items-center justify-center gap-4"
               >
                 {isGeneratingBasic ? (
                   <span className="animate-pulse text-xs tracking-widest">SINCRO_IA...</span>
                 ) : (
                   <>
-                    SINTETIZAR RUTINA <span className="text-xl">⚡</span>
+                    Probar rutina con parámetros ficticios
                   </>
                 )}
               </button>
@@ -673,14 +657,14 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                   </p>
                   <button
                     onClick={handleAiGenerateBasic}
-                    disabled={isGeneratingBasic}
+                    disabled={!routinePilotEnabled || isGeneratingBasic}
                     className="w-full mt-2 py-4 bg-gradient-to-r from-emerald-600 to-cyan-600 hover:from-emerald-500 hover:to-cyan-500 disabled:opacity-30 text-white rounded-2xl font-black text-[10px] uppercase tracking-[0.25em] shadow-[0_10px_30px_rgba(16,185,129,0.3)] transition-all flex items-center justify-center gap-3"
                   >
                     {isGeneratingBasic ? (
                       <span className="animate-pulse">Generando...</span>
                     ) : (
                       <>
-                        Crear rutina básica <span>⚡</span>
+                        Probar rutina con parámetros ficticios
                       </>
                     )}
                   </button>
@@ -716,26 +700,10 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
 
                   <button
                     onClick={handleAiGeneratePro}
-                    disabled={isGeneratingPro || !isPro}
-                    className={`relative w-full mt-4 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.25em] flex items-center justify-center gap-3 transition-all ${
-                      isPro
-                        ? 'bg-gradient-to-r from-fuchsia-600 to-cyan-500 text-white shadow-[0_0_30px_rgba(255,0,247,0.6)] hover:shadow-[0_0_40px_rgba(255,0,247,0.8)]'
-                        : 'bg-slate-900/80 text-slate-500 border border-fuchsia-500/40'
-                    }`}
+                    disabled
+                    className="relative w-full mt-4 py-4 rounded-2xl font-black text-[10px] uppercase tracking-[0.25em] flex items-center justify-center gap-3 bg-slate-900/80 text-slate-500 border border-fuchsia-500/40 cursor-not-allowed"
                   >
-                    {isPro ? (
-                      isGeneratingPro ? (
-                        <span className="animate-pulse">Sintetizando plan PRO...</span>
-                      ) : (
-                        <>
-                          Crear plan semanal PRO <span>🚀</span>
-                        </>
-                      )
-                    ) : (
-                      <>
-                        Desbloquear con Titan PRO <span>🔓</span>
-                      </>
-                    )}
+                    Plan semanal IA no disponible todavía
                   </button>
 
                   {!isPro && (
@@ -746,6 +714,35 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                 </div>
               </div>
             </>
+          )}
+
+          {!routinePilotEnabled && (
+            <p className="text-amber-300 text-sm" role="status">
+              La generación de rutinas IA está desactivada. El piloto solo funciona en desarrollo en localhost:3001 con activación explícita.
+            </p>
+          )}
+          {routinePilotError && (
+            <p className="text-red-400 text-sm" role="alert">
+              {routinePilotError}
+            </p>
+          )}
+          {pilotRoutine && (
+            <section className="rounded-3xl border border-cyan-500/30 bg-slate-900/70 p-6" aria-live="polite">
+              <p className="text-cyan-300 text-xs font-black uppercase tracking-widest">
+                Vista previa de prueba con parámetros ficticios; no se ha guardado
+              </p>
+              <h4 className="mt-3 text-lg font-bold text-white">{pilotRoutine.name}</h4>
+              {pilotRoutine.description && (
+                <p className="mt-2 text-slate-400 text-sm">{pilotRoutine.description}</p>
+              )}
+              <ul className="mt-4 space-y-3">
+                {pilotRoutine.exercises.map(exercise => (
+                  <li key={exercise.id} className="text-sm text-slate-300">
+                    {exercise.name} — {exercise.sets} series, {exercise.reps} repeticiones, descanso {exercise.restTime}
+                  </li>
+                ))}
+              </ul>
+            </section>
           )}
         </div>
       )}

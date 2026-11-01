@@ -1,6 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useRef, useState } from 'react';
 import { Workout, Recommendation, UserProfile } from '../types';
-import { getPersonalizedRecommendationsGroq } from '../services/aiService';
+import {
+  EdgeRecommendationsError,
+  getPersonalizedRecommendationsGroq,
+} from '../services/aiService.edge';
 
 interface RecommendationsProps {
   workouts: Workout[];
@@ -16,31 +19,64 @@ const Recommendations: React.FC<RecommendationsProps> = ({
   nutritionAppUrl
 }) => {
   const [recommendations, setRecommendations] = useState<Recommendation[]>([]);
+  const [pilotRecommendations, setPilotRecommendations] = useState<Recommendation[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const requestInFlightRef = useRef(false);
+  const pilotEnabled =
+    import.meta.env.VITE_AI_RECOMMENDATIONS_PILOT === 'true' &&
+    import.meta.env.DEV === true &&
+    typeof window !== 'undefined' &&
+    window.location.origin === 'http://localhost:3001';
 
   const fetchRecommendations = async () => {
-    if (workouts.length === 0) return;
+    if (!pilotEnabled || requestInFlightRef.current) return;
+    if (!window.confirm(
+      'La prueba usa exclusivamente datos ficticios, puede consumir una unidad de cuota y contactará con Groq. ¿Deseas continuar?'
+    )) return;
+
+    requestInFlightRef.current = true;
     setLoading(true);
     setError(null);
 
     try {
-      const recs = await getPersonalizedRecommendationsGroq(workouts, profile);
-      setRecommendations(recs);
+      const recs = await getPersonalizedRecommendationsGroq();
+      setPilotRecommendations(recs);
     } catch (err) {
-      setError('No se pudieron cargar las recomendaciones en este momento.');
-      console.error(err);
+      if (err instanceof EdgeRecommendationsError) {
+        switch (err.status) {
+          case 401:
+            setError('La sesión no es válida o ha caducado. Inicia sesión de nuevo.');
+            break;
+          case 403:
+            setError('El acceso a esta prueba no está permitido.');
+            break;
+          case 429:
+            setError('La cuota de IA está agotada. Inténtalo más tarde.');
+            break;
+          case 500:
+          case 503:
+            setError('El servicio de IA no está disponible temporalmente.');
+            break;
+          case 502:
+            setError('El proveedor de IA devolvió una respuesta no válida.');
+            break;
+          case 504:
+            setError('La solicitud superó el tiempo de espera.');
+            break;
+          default:
+            setError(
+              'No se pudo confirmar el resultado. No se reintentó la solicitud.'
+            );
+        }
+      } else {
+        setError('No se pudo completar la prueba. No se reintentó la solicitud.');
+      }
     } finally {
+      requestInFlightRef.current = false;
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (workouts.length > 0 && recommendations.length === 0) {
-      fetchRecommendations();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workouts]);
 
   const getCategoryColor = (cat: string) => {
     switch (cat) {
@@ -103,16 +139,21 @@ const Recommendations: React.FC<RecommendationsProps> = ({
 
           <button
             onClick={fetchRecommendations}
-            disabled={loading || workouts.length === 0}
+            disabled={!pilotEnabled || loading}
             className={`px-6 py-4 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] transition-all shadow-lg ${
               isPro
                 ? 'bg-gradient-to-r from-fuchsia-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 disabled:bg-slate-700 text-white shadow-[0_0_30px_rgba(255,0,247,0.25)]'
                 : 'bg-blue-600 hover:bg-blue-500 disabled:bg-slate-700 text-white'
             }`}
           >
-            {loading ? 'ANALIZANDO...' : isPro ? 'ACTUALIZAR COACH PRO' : 'ACTUALIZAR TIPS'}
+            {loading ? 'PROBANDO IA...' : 'Probar IA con datos ficticios'}
           </button>
         </div>
+        {!pilotEnabled && (
+          <p className="relative mt-5 text-amber-300 text-sm" role="status">
+            La generación de recomendaciones está desactivada. El piloto solo funciona en desarrollo en localhost:3001 con activación explícita.
+          </p>
+        )}
       </div>
 
       {/* EMPTY */}
@@ -138,6 +179,29 @@ const Recommendations: React.FC<RecommendationsProps> = ({
 
       {/* ERROR */}
       {error && <p className="text-red-400 text-center">{error}</p>}
+
+      {pilotRecommendations !== null && (
+        <section aria-live="polite">
+          <h3 className="text-cyan-300 font-bold uppercase tracking-wider mb-4">
+            Resultado de prueba con datos ficticios
+          </h3>
+          {pilotRecommendations.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {pilotRecommendations.map((rec, idx) => (
+                <div key={idx} className="p-6 rounded-[24px] border border-cyan-500/30 bg-slate-900/70">
+                  <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold uppercase border mb-3 ${getCategoryColor(rec.category)}`}>
+                    {rec.category}
+                  </span>
+                  <h4 className="text-lg font-bold text-white mb-2">{rec.title}</h4>
+                  <p className="text-slate-400 text-sm leading-relaxed">{rec.description}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-slate-400">La prueba no devolvió recomendaciones.</p>
+          )}
+        </section>
+      )}
 
       {/* PRO COACH BLOCK */}
       {isPro && workouts.length > 0 && (

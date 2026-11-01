@@ -25,5 +25,7 @@
     },
     "allowImportingTsExtensions": true,
     "noEmit": true
-  }
+  },
+  "include": ["src/**/*.ts", "services/**/*.ts", "types.ts", "App.tsx", "index.tsx", "components/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "tests", "supabase"]
 }
