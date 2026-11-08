@@ -16,6 +16,7 @@ import {
   ValidationErrorImpl,
   type ValidatedRoutineRequest,
 } from '../_shared/validate.ts';
+import { ROUTINE_FOCUSES } from '../../../shared/routine.ts';
 
 const ALLOWED_ORIGINS: Record<string, string> = {
   'http://localhost:3001': 'http://localhost:3001',
@@ -38,29 +39,46 @@ type HandlerDeps = {
 const PREMIUM_OPERATIONS_BLOCKED = true;
 
 function buildPrompt(req: ValidatedRoutineRequest): string {
-  const isPlanMode = req.mode === 'pro_plan';
-  const base = `Eres un entrenador personal especializado en planificación de entrenamiento.
-Crea una rutina de gimnasio con estos parámetros:
-- Días por semana: ${req.daysPerWeek}
-- Objetivo principal: ${req.objective}
-- Nivel: ${req.level}
-- Equipamiento: ${req.equipment || 'ninguno especificado'}
-- Duración de sesión: ${req.sessionMinutes ?? 60} minutos
-
-Devuelve SOLO un JSON con este formato exacto:
+  const outputFormat = `Devuelve SOLO un JSON con estas claves exactas:
 {
   "name": "string",
   "description": "string",
   "exercises": [
     { "name": "string", "sets": number, "reps": "string", "restTime": "string" }
   ]
-}`;
+}
+No traduzcas ni cambies las claves JSON. Todo el texto visible de los valores debe estar en español: nombre y descripción de la rutina, nombres de ejercicios e indicaciones de repeticiones y descanso.`;
 
-  if (isPlanMode) {
-    return base +
-      `\n\nMODO PLAN SEMANAL: El plan debe cubrir exactamente ${req.daysPerWeek} días. Usa días en español (Lunes, Martes, Miércoles, Jueves, Viernes, Sábado, Domingo) y en orden.`;
+  if (req.mode === 'pro_plan') {
+    return `Eres un entrenador personal especializado en planificación de entrenamiento.
+Crea un plan de entrenamiento de gimnasio con estos parámetros:
+- Días por semana: ${req.daysPerWeek}
+- Objetivo principal: ${req.objective}
+- Nivel: ${req.level}
+- Equipamiento: ${req.equipment || 'ninguno especificado'}
+- Duración de sesión: ${req.sessionMinutes ?? 60} minutos
+
+${outputFormat}
+
+MODO PLAN SEMANAL: El plan debe cubrir exactamente ${req.daysPerWeek} días. Usa días en español (Lunes, Martes, Miércoles, Jueves, Viernes, Sábado, Domingo) y en orden.`;
   }
-  return base;
+
+  return `Eres un entrenador personal especializado en planificación de entrenamiento.
+Crea UNA sola sesión de gimnasio, sin dividirla en días, con estos parámetros:
+- Objetivo principal: ${req.objective}
+- Nivel: ${req.level}
+- Equipamiento: ${req.equipment || 'ninguno especificado'}
+- Duración de la sesión: ${req.sessionMinutes ?? 60} minutos
+- Grupos musculares o enfoques seleccionados: ${ROUTINE_FOCUSES
+    .filter((option) => req.focuses.includes(option.value))
+    .map((option) => option.label)
+    .join(', ')}
+
+Representa cada uno de los grupos seleccionados con al menos un ejercicio adecuado. Reparte el volumen de toda la sesión entre los grupos elegidos, sin repetir el volumen completo por grupo.
+Diseña la sesión tomando como referencia orientativa unas 20 series de trabajo totales para toda la sesión, con un margen aproximado de 17 a 23 en conjunto. Cuenta las series sumando las series de cada ejercicio; 20 series no significa 20 ejercicios ni 20 series por grupo. Ajusta la propuesta para que sea coherente con los parámetros y no conviertas ese margen en una condición rígida.
+Incluye únicamente ejercicios reales en la lista "exercises". No añadas encabezados de días como ejercicios ni crees una división semanal. Si se seleccionó Cuerpo completo, úsalo como enfoque exclusivo de la sesión.
+
+${outputFormat}`;
 }
 
 function errorResponse(

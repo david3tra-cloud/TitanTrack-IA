@@ -65,6 +65,15 @@ test('Edge recommendations uses the fake-only request and preserves controlled e
       error: null,
     });
     const service = await server.ssrLoadModule('/services/aiService.edge.ts');
+    const componentModule = await server.ssrLoadModule('/components/Recommendations.tsx');
+    assert.equal(componentModule.isRecommendationsPilotEnabled(true, false, 'true', 'http://localhost:3001', true), true);
+    assert.equal(componentModule.isRecommendationsPilotEnabled(false, true, 'true', 'https://titantrack-clean.vercel.app', true), true);
+    assert.equal(componentModule.isRecommendationsPilotEnabled(true, false, 'true', 'http://localhost:3000', true), false);
+    assert.equal(componentModule.isRecommendationsPilotEnabled(false, true, 'true', 'https://preview-titantrack.vercel.app', true), false);
+    assert.equal(componentModule.isRecommendationsPilotEnabled(false, true, 'true', 'https://titantrack-clean.vercel.app.evil.test', true), false);
+    assert.equal(componentModule.isRecommendationsPilotEnabled(true, false, 'false', 'http://localhost:3001', true), false);
+    assert.equal(componentModule.isRecommendationsPilotEnabled(false, true, 'true', 'https://titantrack-clean.vercel.app', false), false);
+
     const result = await service.getPersonalizedRecommendationsGroq();
     assert.deepEqual(result, [
       { title: 'Consejo ficticio', description: 'Contenido de prueba', category: 'strength' },
@@ -121,11 +130,17 @@ test('Edge recommendations uses the fake-only request and preserves controlled e
     assert.match(component, /from '\.\.\/services\/aiService\.edge'/);
     assert.doesNotMatch(component, /from '\.\.\/services\/aiService'/);
     assert.doesNotMatch(component, /\buseEffect\b/);
-    assert.match(component, /VITE_AI_RECOMMENDATIONS_PILOT === 'true'/);
+    assert.match(component, /import\.meta\.env\.VITE_AI_RECOMMENDATIONS_PILOT/);
     assert.match(component, /import\.meta\.env\.DEV === true/);
-    assert.match(component, /window\.location\.origin === 'http:\/\/localhost:3001'/);
+    assert.match(component, /import\.meta\.env\.PROD === true/);
     assert.match(component, /window\.confirm\(/);
-    assert.match(component, /if \(!pilotEnabled \|\| requestInFlightRef\.current\) return/);
+    assert.match(component, /!pilotEnabled \|\| !isLoggedIn \|\| requestInFlightRef\.current/);
+    assert.match(component, /disabled=\{!pilotEnabled \|\| !isLoggedIn \|\| loading\}/);
+    assert.match(component, /Esta prueba usa únicamente datos sintéticos/);
+    assert.match(component, /no analiza tu historial ni tu perfil real/);
+    assert.match(component, /no depende de tus entrenamientos registrados/);
+    assert.doesNotMatch(component, /consejos personalizados/);
+    assert.match(component, /if \(!pilotEnabled \|\| !isLoggedIn \|\| requestInFlightRef\.current\) return/);
     assert.match(component, /requestInFlightRef\.current = true/);
     assert.match(component, /finally\s*\{\s*requestInFlightRef\.current = false/);
     assert.ok(

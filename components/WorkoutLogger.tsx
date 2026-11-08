@@ -1,32 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { Workout, Exercise, Set, Routine } from '../types';
 import { EXERCISE_CATEGORIES, INITIAL_EXERCISES } from '../constants';
-
-const STORAGE_KEY = 'titan_active_workout';
-
-interface ActiveWorkoutState {
-  name: string;
-  exercises: Exercise[];
-  totalSeconds: number;
-}
+import {
+  canSaveWorkoutDraft,
+  createWorkoutDraftWriter,
+  discardUnownedLegacyWorkoutDraft,
+  hasUnownedLegacyWorkoutDraft,
+  readWorkoutDraft,
+  removeWorkoutDraft
+} from '../shared/workoutDraft';
 
 interface WorkoutLoggerProps {
-  onSave: (workout: Workout) => void;
+  ownerId: string | null;
+  activeUserId: string | null;
+  onSave: (
+    workout: Workout,
+    draftOwnerId: string | null
+  ) => Promise<{ success: boolean; message?: string }>;
   onCancel: () => void;
   routines: Routine[];
 }
 
-const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onSave, onCancel, routines }) => {
-  const getSavedState = (): ActiveWorkoutState | null => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
-    } catch {
-      return null;
-    }
-  };
-
-  const saved = getSavedState();
+const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({
+  ownerId,
+  activeUserId,
+  onSave,
+  onCancel,
+  routines
+}) => {
+  const [saved] = useState(() => readWorkoutDraft(localStorage, ownerId));
 
   const [name, setName] = useState<string>(saved?.name ?? 'RUTINA_' + Date.now().toString().slice(-4));
   const [exercises, setExercises] = useState<Exercise[]>(saved?.exercises ?? []);
@@ -34,12 +36,17 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onSave, onCancel, routine
   const [timerSeconds, setTimerSeconds] = useState<number | null>(null);
   const [totalSeconds, setTotalSeconds] = useState<number>(saved?.totalSeconds ?? 0);
   const [showResumeAlert, setShowResumeAlert] = useState<boolean>(!!saved);
+  const [showLegacyDraftAlert, setShowLegacyDraftAlert] = useState(
+    () => hasUnownedLegacyWorkoutDraft(localStorage)
+  );
+  const [saveError, setSaveError] = useState('');
+  const [isSaving, setIsSaving] = useState(false);
 
   // Persistir estado activo en localStorage en cada cambio
   useEffect(() => {
-    const state: ActiveWorkoutState = { name, exercises, totalSeconds };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  }, [name, exercises, totalSeconds]);
+    const writeDraft = createWorkoutDraftWriter(localStorage, ownerId);
+    writeDraft({ name, exercises, totalSeconds });
+  }, [ownerId, name, exercises, totalSeconds]);
 
   // Cronometro total
   useEffect(() => {
@@ -59,7 +66,7 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onSave, onCancel, routine
   }, [timerSeconds]);
 
   const clearSavedSession = () => {
-    localStorage.removeItem(STORAGE_KEY);
+    removeWorkoutDraft(localStorage, ownerId);
   };
 
   const loadRoutine = (routine: Routine) => {
@@ -129,11 +136,16 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onSave, onCancel, routine
     ));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (exercises.length === 0) {
       alert('Añade al menos un ejercicio para guardar la sesión.');
       return;
     }
+    if (!canSaveWorkoutDraft(ownerId, activeUserId)) {
+      setSaveError('La identidad propietaria del borrador no coincide con la sesión activa. No se guardó el entrenamiento.');
+      return;
+    }
+
     const workout: Workout = {
       id: Math.random().toString(36).substr(2, 9),
       date: new Date().toISOString(),
@@ -143,8 +155,16 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onSave, onCancel, routine
         sets: ex.sets.filter(s => s.completed || (s.reps > 0 && s.weight >= 0))
       }))
     };
+
+    setIsSaving(true);
+    setSaveError('');
+    const result = await onSave(workout, ownerId);
+    setIsSaving(false);
+    if (!result.success) {
+      setSaveError(result.message || 'No se pudo guardar el entrenamiento. El borrador se ha conservado.');
+      return;
+    }
     clearSavedSession();
-    onSave(workout);
   };
 
   const handleCancel = () => {
@@ -160,9 +180,41 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onSave, onCancel, routine
     setShowResumeAlert(false);
   };
 
+  const handleDiscardLegacyDraft = () => {
+    if (!window.confirm('Este borrador antiguo no tiene propietario identificado. ¿Quieres descartarlo definitivamente?')) {
+      return;
+    }
+
+    discardUnownedLegacyWorkoutDraft(localStorage);
+    setShowLegacyDraftAlert(false);
+  };
+
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-start justify-center overflow-y-auto py-4 px-4">
       <div className="w-full max-w-4xl bg-gradient-to-br from-slate-900 via-black to-slate-950 border border-white/10 rounded-3xl shadow-2xl p-6 space-y-6">
+        {showLegacyDraftAlert && (
+          <div className="bg-amber-500/10 border-2 border-amber-500/50 rounded-2xl p-4 space-y-3">
+            <p className="font-black text-amber-300 uppercase tracking-widest text-sm">
+              Borrador antiguo sin propietario identificado
+            </p>
+            <p className="text-slate-300 text-xs">
+              Se encontró un borrador guardado antes de separar las sesiones por identidad. No se restaurará ni se asociará a ninguna cuenta.
+            </p>
+            <button
+              onClick={handleDiscardLegacyDraft}
+              className="py-2 px-4 bg-amber-500/20 border border-amber-500/50 text-amber-200 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-amber-500 hover:text-black transition-all"
+            >
+              Descartar borrador antiguo
+            </button>
+          </div>
+        )}
+
+        {saveError && (
+          <div role="alert" className="bg-red-500/10 border border-red-500/40 rounded-xl p-3 text-red-200 text-sm">
+            {saveError}
+          </div>
+        )}
+
         {/* Banner de entrenamiento en curso */}
         {showResumeAlert && (
           <div className="bg-cyan-500/10 border-2 border-cyan-500/50 rounded-2xl p-4 space-y-3">
@@ -369,9 +421,10 @@ const WorkoutLogger: React.FC<WorkoutLoggerProps> = ({ onSave, onCancel, routine
           </button>
           <button
             onClick={handleSave}
+            disabled={isSaving}
             className="flex-1 py-4 bg-gradient-to-r from-cyan-500 to-blue-600 rounded-2xl text-[10px] font-black uppercase tracking-widest text-black hover:text-black transition-all"
           >
-            Confirmar Transmisión
+            {isSaving ? 'Guardando...' : 'Confirmar Transmisión'}
           </button>
         </div>
       </div>

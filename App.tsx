@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Workout,
@@ -17,6 +17,10 @@ import WeightTracker from './components/WeightTracker';
 import ExerciseLibrary from './components/ExerciseLibrary';
 import UserProfileView from './components/UserProfileView';
 import { supabase } from './src/lib/supabaseClient';
+import {
+  canSaveWorkoutDraft,
+  getWorkoutDraftStorageKey
+} from './shared/workoutDraft';
 
 const defaultUserProfile: UserProfile = {
   displayName: '',
@@ -118,6 +122,9 @@ const App: React.FC = () => {
   const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const activeUserIdRef = useRef<string | null>(null);
+  activeUserIdRef.current = authUser?.id ?? null;
+  const [workoutSaveNotice, setWorkoutSaveNotice] = useState('');
 
   const [pendingProfileLoad, setPendingProfileLoad] = useState<{
     id: string;
@@ -238,20 +245,23 @@ const App: React.FC = () => {
 
       await loadProfile(id, email, name);
 
-      const { data: weightData, error: weightError } = await supabase
-        .from('weight_records')
-        .select('id, date, weight')
-        .order('date', { ascending: true });
+      if (id) {
+        const { data: weightData, error: weightError } = await supabase
+          .from('weight_records')
+          .select('id, date, weight')
+          .eq('user_id', id)
+          .order('date', { ascending: true });
 
-      if (weightError) {
-        console.error('Error cargando weight_records (profile load):', weightError.message);
-      } else if (weightData) {
-        const mapped: WeightRecord[] = weightData.map(row => ({
-          id: row.id,
-          date: row.date,
-          weight: Number(row.weight)
-        }));
-        setWeightRecords(mapped);
+        if (weightError) {
+          console.error('Error cargando weight_records (profile load):', weightError.message);
+        } else if (weightData) {
+          const mapped: WeightRecord[] = weightData.map(row => ({
+            id: row.id,
+            date: row.date,
+            weight: Number(row.weight)
+          }));
+          setWeightRecords(mapped);
+        }
       }
 
       if (closeModal) {
@@ -494,10 +504,22 @@ const App: React.FC = () => {
     clearAuthState();
   };
 
-  const saveWorkout = async (workout: Workout) => {
-    if (!authUser?.id) {
-      console.error('No hay usuario autenticado para guardar workout.');
-      return;
+  const saveWorkout = async (workout: Workout, draftOwnerId: string | null) => {
+    const activeUserId = activeUserIdRef.current;
+    if (draftOwnerId !== activeUserId) {
+      const message = 'La sesión activa pertenece a otra identidad. No se guardó este entrenamiento.';
+      setWorkoutSaveNotice(message);
+      return {
+        success: false,
+        message
+      };
+    }
+
+    if (!activeUserId || !canSaveWorkoutDraft(draftOwnerId, activeUserId)) {
+      return {
+        success: false,
+        message: 'Inicia sesión para guardar el entrenamiento. El borrador local se conservará.'
+      };
     }
 
     const workoutId = workout.id || Math.random().toString(36).slice(2, 11);
@@ -509,7 +531,7 @@ const App: React.FC = () => {
 
     const { error } = await supabase.from('workouts').insert({
       id: workoutToSave.id,
-      user_id: authUser.id,
+      user_id: activeUserId,
       name: workoutToSave.name,
       date: workoutToSave.date,
       data: workoutToSave
@@ -517,17 +539,22 @@ const App: React.FC = () => {
 
     if (error) {
       console.error('Error guardando workout:', error.message);
-      return;
+      return {
+        success: false,
+        message: 'No se pudo guardar el entrenamiento. El borrador se ha conservado.'
+      };
     }
 
     setWorkouts(prev => [...prev, workoutToSave]);
+    setWorkoutSaveNotice('');
     setShowLogger(false);
+    return { success: true };
   };
 
   const saveRoutine = async (routine: Routine) => {
     if (!authUser?.id) {
       console.error('No hay usuario autenticado para guardar rutina.');
-      return;
+      return false;
     }
 
     const routineId = routine.id || Math.random().toString(36).slice(2, 11);
@@ -551,7 +578,7 @@ const App: React.FC = () => {
 
       if (error) {
         console.error('Error actualizando rutina:', error.message);
-        return;
+        return false;
       }
 
       setRoutines(prev =>
@@ -568,11 +595,13 @@ const App: React.FC = () => {
 
       if (error) {
         console.error('Error creando rutina:', error.message);
-        return;
+        return false;
       }
 
       setRoutines(prev => [...prev, routineToSave]);
     }
+
+    return true;
   };
 
   const deleteRoutine = async (id: string) => {
@@ -625,10 +654,16 @@ const App: React.FC = () => {
   };
 
   const deleteWeightRecord = async (id: string) => {
+    if (!authUser?.id) {
+      console.error('No hay usuario autenticado para borrar peso.');
+      return;
+    }
+
     const { error } = await supabase
       .from('weight_records')
       .delete()
-      .eq('id', id);
+      .eq('id', id)
+      .eq('user_id', authUser.id);
 
     if (error) {
       console.error('Error eliminando weight_record:', error.message);
@@ -656,7 +691,6 @@ const App: React.FC = () => {
     const { error } = await supabase.from('profiles').upsert({
       id: authUser.id,
       display_name: cleanedProfile.displayName || '',
-      plan: cleanedProfile.plan || 'free',
       sex: cleanedProfile.sex || null,
       birth_year: cleanedProfile.birthYear ?? null,
       height_cm: cleanedProfile.heightCm ?? null,
@@ -779,7 +813,10 @@ const App: React.FC = () => {
           </div>
 
           <button
-            onClick={() => setShowLogger(true)}
+            onClick={() => {
+              setWorkoutSaveNotice('');
+              setShowLogger(true);
+            }}
             className="group relative px-8 py-5 bg-transparent text-white font-black text-xs uppercase tracking-[0.3em] transition-all overflow-hidden w-full md:w-auto text-center"
           >
             <div className="absolute inset-0 border border-cyan-500/40 rounded-2xl group-hover:border-cyan-400 group-hover:shadow-[0_0_30px_rgba(0,242,255,0.4)] transition-all" />
@@ -793,7 +830,15 @@ const App: React.FC = () => {
         {showLogger && (
           <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-xl flex items-center justify-center p-4 overflow-y-auto">
             <div className="w-full max-w-2xl animate-in zoom-in-95 duration-300">
+              {workoutSaveNotice && (
+                <div role="alert" className="mb-3 bg-red-500/10 border border-red-500/40 rounded-xl p-3 text-red-200 text-sm">
+                  {workoutSaveNotice}
+                </div>
+              )}
               <WorkoutLogger
+                key={getWorkoutDraftStorageKey(authUser?.id ?? null)}
+                ownerId={authUser?.id ?? null}
+                activeUserId={authUser?.id ?? null}
                 onSave={saveWorkout}
                 onCancel={() => setShowLogger(false)}
                 routines={routines}
@@ -813,6 +858,7 @@ const App: React.FC = () => {
             <Recommendations
               workouts={workouts}
               profile={userProfile}
+              isLoggedIn={isLoggedIn}
               isPro={isPro}
               nutritionAppUrl={isInfinity ? 'https://fit-menu-ai.vercel.app/' : undefined}
             />
@@ -835,6 +881,7 @@ const App: React.FC = () => {
               onDeleteRoutine={deleteRoutine}
               isLoggedIn={isLoggedIn}
               isPro={isPro}
+              profile={userProfile}
             />
           )}
 

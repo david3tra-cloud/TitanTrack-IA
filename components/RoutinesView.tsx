@@ -1,57 +1,140 @@
-import React, { useRef, useState } from 'react';
-import { Routine, RoutineExercise } from '../types';
+import React, { useEffect, useRef, useState } from 'react';
+import { Routine, RoutineExercise, UserProfile } from '../types';
 import { INITIAL_EXERCISES } from '../constants';
 import { generateRoutineGroq } from '../services/aiService.edge';
+import {
+  ROUTINE_FOCUSES,
+  toggleRoutineFocus,
+  type RoutineFocus
+} from '../shared/routine';
+import { isAiPilotEnabled } from '../shared/aiPilot';
 
 interface RoutinesViewProps {
   routines: Routine[];
-  onSaveRoutine: (routine: Routine) => void;
+  onSaveRoutine: (routine: Routine) => Promise<boolean>;
   onDeleteRoutine: (id: string) => void;
   isLoggedIn: boolean;
   isPro: boolean;
+  profile: UserProfile;
 }
 
 export function isRoutinePilotEnabled(
   isDevelopment: boolean,
+  isProduction: boolean,
   pilotFlag: string | undefined,
-  origin: string | undefined
+  origin: string | undefined,
+  isLoggedIn: boolean
 ): boolean {
-  return (
-    isDevelopment &&
-    pilotFlag === 'true' &&
-    origin === 'http://localhost:3001'
-  );
+  return isAiPilotEnabled(isDevelopment, isProduction, pilotFlag, origin, isLoggedIn);
 }
+
+interface RoutineFocusSelectorProps {
+  selected: RoutineFocus[];
+  onToggle: (focus: RoutineFocus) => void;
+}
+
+const RoutineFocusSelector: React.FC<RoutineFocusSelectorProps> = ({ selected, onToggle }) => (
+  <div className="space-y-2 md:col-span-2">
+    <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
+      Enfoque o grupos musculares
+    </label>
+    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+      {ROUTINE_FOCUSES.map(option => {
+        const isSelected = selected.includes(option.value);
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={isSelected}
+            onClick={() => onToggle(option.value)}
+            className={`rounded-xl border px-3 py-3 text-xs font-bold transition-all ${
+              isSelected
+                ? 'border-cyan-400 bg-cyan-500/20 text-cyan-200 shadow-[0_0_12px_rgba(0,242,255,0.12)]'
+                : 'border-white/10 bg-black/60 text-slate-400 hover:border-cyan-500/40 hover:text-white'
+            }`}
+          >
+            {option.label}
+          </button>
+        );
+      })}
+    </div>
+    <p className="px-2 pt-1 text-[10px] leading-relaxed text-slate-400">
+      Puedes elegir varios grupos musculares. Las aproximadamente 20 series de la sesión se repartirán entre los seleccionados.
+    </p>
+  </div>
+);
 
 const RoutinesView: React.FC<RoutinesViewProps> = ({
   routines,
   onSaveRoutine,
   onDeleteRoutine,
   isLoggedIn,
-  isPro
+  isPro,
+  profile
 }) => {
   const [activeTab, setActiveTab] = useState<'list' | 'ai' | 'manual'>('list');
   const [isGeneratingBasic, setIsGeneratingBasic] = useState(false);
   const [pilotRoutine, setPilotRoutine] = useState<Routine | null>(null);
+  const [pilotRoutineSaved, setPilotRoutineSaved] = useState(false);
+  const [isSavingPilotRoutine, setIsSavingPilotRoutine] = useState(false);
   const [routinePilotError, setRoutinePilotError] = useState<string | null>(null);
+  const [routinePilotSuccess, setRoutinePilotSuccess] = useState<string | null>(null);
   const routinePilotRequestInFlight = useRef(false);
+  const routineSaveInFlight = useRef(false);
   const [expandedRoutines, setExpandedRoutines] = useState<Record<string, boolean>>({});
   const [expandedPlanDays, setExpandedPlanDays] = useState<Record<string, string | null>>({});
   const routinePilotEnabled = isRoutinePilotEnabled(
     import.meta.env.DEV === true,
+    import.meta.env.PROD === true,
     import.meta.env.VITE_AI_ROUTINE_PILOT,
-    typeof window === 'undefined' ? undefined : window.location.origin
+    typeof window === 'undefined' ? undefined : window.location.origin,
+    isLoggedIn
   );
 
-  const [aiDays, setAiDays] = useState('3 días');
-  const [aiObjective, setAiObjective] = useState('Crecimiento muscular');
-  const [aiLevel, setAiLevel] = useState('Intermedio');
+  const [aiObjective, setAiObjective] = useState('');
+  const [aiLevel, setAiLevel] = useState('');
+  const [aiFocuses, setAiFocuses] = useState<RoutineFocus[]>(['full_body']);
   const [aiEquipment, setAiEquipment] = useState('');
+  const [aiSessionMinutes, setAiSessionMinutes] = useState('');
+  const touchedAiFields = useRef(new Set<string>());
 
   const [manualName, setManualName] = useState('');
   const [manualDesc, setManualDesc] = useState('');
   const [manualExercises, setManualExercises] = useState<RoutineExercise[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!touchedAiFields.current.has('objective')) {
+      const profileObjectives: Partial<Record<UserProfile['goal'], string>> = {
+        muscle_gain: 'Crecimiento muscular',
+        fat_loss: 'Adelgazar',
+        strength: 'Fuerza'
+      };
+      setAiObjective(profileObjectives[profile.goal] || '');
+    }
+
+    if (!touchedAiFields.current.has('level')) {
+      const profileLevels: Partial<Record<UserProfile['level'], string>> = {
+        beginner: 'Principiante',
+        intermediate: 'Intermedio',
+        advanced: 'Avanzado'
+      };
+      setAiLevel(profileLevels[profile.level] || '');
+    }
+
+    if (!touchedAiFields.current.has('equipment')) {
+      setAiEquipment(profile.equipment.join(', '));
+    }
+
+    if (!touchedAiFields.current.has('sessionMinutes')) {
+      const minutes = profile.sessionMinutes;
+      setAiSessionMinutes(
+        typeof minutes === 'number' && Number.isFinite(minutes) && minutes >= 1 && minutes <= 480
+          ? String(minutes)
+          : ''
+      );
+    }
+  }, [profile]);
 
   const toggleRoutine = (id: string) => {
     setExpandedRoutines(prev => ({
@@ -99,18 +182,23 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
     setManualExercises(prev => prev.map(ex => (ex.id === id ? { ...ex, [field]: value } : ex)));
   };
 
-  const handleSaveManual = () => {
+  const handleSaveManual = async () => {
     if (!manualName || manualExercises.length === 0) {
       alert('Nombre y al menos un ejercicio requerido');
       return;
     }
 
-    onSaveRoutine({
+    const saved = await onSaveRoutine({
       id: editingId || Math.random().toString(36).slice(2, 11),
       name: manualName,
       description: manualDesc,
       exercises: manualExercises
     });
+
+    if (!saved) {
+      alert('No se pudo guardar la rutina.');
+      return;
+    }
 
     setActiveTab('list');
     setManualName('');
@@ -135,8 +223,26 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
       !isLoggedIn ||
       routinePilotRequestInFlight.current
     ) return;
+    if (!aiObjective || !aiLevel || aiFocuses.length === 0) {
+      setRoutinePilotError('Completa objetivo, nivel y enfoque para generar la rutina.');
+      return;
+    }
+
+    const parsedSessionMinutes = aiSessionMinutes.trim()
+      ? Number(aiSessionMinutes)
+      : undefined;
+    if (
+      parsedSessionMinutes !== undefined &&
+      (!Number.isFinite(parsedSessionMinutes) ||
+        parsedSessionMinutes < 1 ||
+        parsedSessionMinutes > 480)
+    ) {
+      setRoutinePilotError('La duración debe estar entre 1 y 480 minutos.');
+      return;
+    }
+
     if (!window.confirm(
-      'Esta prueba usa parámetros ficticios. Contactará con IA y puede consumir cuota. ¿Deseas continuar?'
+      'Se generará una rutina con los parámetros del formulario. Contactará con IA y puede consumir cuota. ¿Deseas continuar?'
     )) return;
 
     routinePilotRequestInFlight.current = true;
@@ -144,15 +250,17 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
     setRoutinePilotError(null);
     try {
       const newRoutine = await generateRoutineGroq({
-        daysPerWeek: '3 días',
-        objective: 'Fuerza general',
-        level: 'Principiante',
-        equipment: 'Mancuernas',
+        objective: aiObjective,
+        level: aiLevel,
+        focuses: aiFocuses,
+        equipment: aiEquipment.trim() || undefined,
         mode: 'basic',
-        sessionMinutes: 45,
+        sessionMinutes: parsedSessionMinutes,
       });
 
       setPilotRoutine(newRoutine);
+      setPilotRoutineSaved(false);
+      setRoutinePilotSuccess(null);
     } catch {
       setRoutinePilotError(
         'No se pudo completar la prueba de rutina. No se guardó ni se reintentó.'
@@ -160,6 +268,30 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
     } finally {
       routinePilotRequestInFlight.current = false;
       setIsGeneratingBasic(false);
+    }
+  };
+
+  const handleSavePilotRoutine = async () => {
+    if (!pilotRoutine || pilotRoutineSaved || routineSaveInFlight.current) return;
+
+    routineSaveInFlight.current = true;
+    setIsSavingPilotRoutine(true);
+    setRoutinePilotError(null);
+    setRoutinePilotSuccess(null);
+    try {
+      const saved = await onSaveRoutine(pilotRoutine);
+      if (!saved) {
+        setRoutinePilotError('No se pudo guardar la rutina. Inténtalo de nuevo.');
+        return;
+      }
+
+      setPilotRoutineSaved(true);
+      setRoutinePilotSuccess('Rutina guardada en tu listado.');
+    } catch {
+      setRoutinePilotError('Ocurrió un error al guardar la rutina.');
+    } finally {
+      routineSaveInFlight.current = false;
+      setIsSavingPilotRoutine(false);
     }
   };
 
@@ -256,7 +388,7 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                           {ex.name}
                         </p>
                         <p className="text-[10px] text-cyan-400/70 font-black uppercase tracking-widest mt-1">
-                          {ex.sets} series x {ex.reps} reps
+                          {ex.sets} series x {ex.reps} repeticiones
                         </p>
                       </div>
                       <div className="text-right">
@@ -411,7 +543,7 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                                     {ex.name}
                                   </p>
                                   <p className="text-[9px] text-cyan-400/80 uppercase tracking-[0.2em]">
-                                    {ex.sets} x {ex.reps}
+                                    {ex.sets} series x {ex.reps} repeticiones
                                   </p>
                                 </div>
                                 <span className="text-[9px] text-slate-400 font-mono">
@@ -456,7 +588,7 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
             {tab === 'list'
               ? 'MIS RUTINAS'
               : tab === 'ai'
-              ? '⚡ GENERADOR AI'
+                ? '⚡ GENERADOR IA'
               : '✍️ MANUAL'}
           </button>
         ))}
@@ -492,30 +624,17 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
-                    Frecuencia
-                  </label>
-                  <select
-                    value={aiDays}
-                    onChange={e => setAiDays(e.target.value)}
-                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none appearance-none"
-                  >
-                    {['2 días', '3 días', '4 días', '5 días', '6 días'].map(opt => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
                     Vector de Objetivo
                   </label>
                   <select
                     value={aiObjective}
-                    onChange={e => setAiObjective(e.target.value)}
+                    onChange={e => {
+                      touchedAiFields.current.add('objective');
+                      setAiObjective(e.target.value);
+                    }}
                     className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none appearance-none"
                   >
+                    <option value="">Selecciona el objetivo</option>
                     {['Adelgazar', 'Tonificar', 'Crecimiento muscular', 'Fuerza', 'Resistencia'].map(opt => (
                       <option key={opt} value={opt}>
                         {opt}
@@ -524,15 +643,24 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                   </select>
                 </div>
 
+                <RoutineFocusSelector
+                  selected={aiFocuses}
+                  onToggle={focus => setAiFocuses(current => toggleRoutineFocus(current, focus))}
+                />
+
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
                     Nivel de Usuario
                   </label>
                   <select
                     value={aiLevel}
-                    onChange={e => setAiLevel(e.target.value)}
+                    onChange={e => {
+                      touchedAiFields.current.add('level');
+                      setAiLevel(e.target.value);
+                    }}
                     className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none appearance-none"
                   >
+                    <option value="">Selecciona el nivel</option>
                     {['Principiante', 'Intermedio', 'Avanzado'].map(opt => (
                       <option key={opt} value={opt}>
                         {opt}
@@ -543,13 +671,33 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
 
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
-                    Hardware / Equipo
+                    Equipo
                   </label>
                   <input
                     type="text"
                     value={aiEquipment}
-                    onChange={e => setAiEquipment(e.target.value)}
+                    onChange={e => {
+                      touchedAiFields.current.add('equipment');
+                      setAiEquipment(e.target.value);
+                    }}
                     placeholder="Gimnasio completo, etc..."
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
+                    Duración de sesión (minutos)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="480"
+                    value={aiSessionMinutes}
+                    onChange={e => {
+                      touchedAiFields.current.add('sessionMinutes');
+                      setAiSessionMinutes(e.target.value);
+                    }}
+                    placeholder="Opcional"
                     className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none"
                   />
                 </div>
@@ -564,7 +712,7 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                   <span className="animate-pulse text-xs tracking-widest">SINCRO_IA...</span>
                 ) : (
                   <>
-                    Probar rutina con parámetros ficticios
+                    Generar rutina básica
                   </>
                 )}
               </button>
@@ -580,30 +728,17 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
-                    Frecuencia
-                  </label>
-                  <select
-                    value={aiDays}
-                    onChange={e => setAiDays(e.target.value)}
-                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none appearance-none"
-                  >
-                    {['2 días', '3 días', '4 días', '5 días', '6 días'].map(opt => (
-                      <option key={opt} value={opt}>
-                        {opt}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
                     Vector de Objetivo
                   </label>
                   <select
                     value={aiObjective}
-                    onChange={e => setAiObjective(e.target.value)}
+                    onChange={e => {
+                      touchedAiFields.current.add('objective');
+                      setAiObjective(e.target.value);
+                    }}
                     className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none appearance-none"
                   >
+                    <option value="">Selecciona el objetivo</option>
                     {['Adelgazar', 'Tonificar', 'Crecimiento muscular', 'Fuerza', 'Resistencia'].map(opt => (
                       <option key={opt} value={opt}>
                         {opt}
@@ -612,15 +747,24 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                   </select>
                 </div>
 
+                <RoutineFocusSelector
+                  selected={aiFocuses}
+                  onToggle={focus => setAiFocuses(current => toggleRoutineFocus(current, focus))}
+                />
+
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
                     Nivel de Usuario
                   </label>
                   <select
                     value={aiLevel}
-                    onChange={e => setAiLevel(e.target.value)}
+                    onChange={e => {
+                      touchedAiFields.current.add('level');
+                      setAiLevel(e.target.value);
+                    }}
                     className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none appearance-none"
                   >
+                    <option value="">Selecciona el nivel</option>
                     {['Principiante', 'Intermedio', 'Avanzado'].map(opt => (
                       <option key={opt} value={opt}>
                         {opt}
@@ -631,13 +775,33 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
 
                 <div className="space-y-2">
                   <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
-                    Hardware / Equipo
+                    Equipo
                   </label>
                   <input
                     type="text"
                     value={aiEquipment}
-                    onChange={e => setAiEquipment(e.target.value)}
+                    onChange={e => {
+                      touchedAiFields.current.add('equipment');
+                      setAiEquipment(e.target.value);
+                    }}
                     placeholder="Mancuernas, barra, poleas..."
+                    className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] px-2">
+                    Duración de sesión (minutos)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="480"
+                    value={aiSessionMinutes}
+                    onChange={e => {
+                      touchedAiFields.current.add('sessionMinutes');
+                      setAiSessionMinutes(e.target.value);
+                    }}
+                    placeholder="Opcional"
                     className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white font-bold italic focus:ring-2 focus:ring-cyan-500 outline-none"
                   />
                 </div>
@@ -664,7 +828,7 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                       <span className="animate-pulse">Generando...</span>
                     ) : (
                       <>
-                        Probar rutina con parámetros ficticios
+                        Generar rutina básica
                       </>
                     )}
                   </button>
@@ -726,10 +890,17 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
               {routinePilotError}
             </p>
           )}
+          {routinePilotSuccess && (
+            <p className="text-emerald-400 text-sm" role="status">
+              {routinePilotSuccess}
+            </p>
+          )}
           {pilotRoutine && (
             <section className="rounded-3xl border border-cyan-500/30 bg-slate-900/70 p-6" aria-live="polite">
               <p className="text-cyan-300 text-xs font-black uppercase tracking-widest">
-                Vista previa de prueba con parámetros ficticios; no se ha guardado
+                {pilotRoutineSaved
+                  ? 'Rutina guardada en tu listado'
+                  : 'Vista previa de la rutina generada; no se ha guardado'}
               </p>
               <h4 className="mt-3 text-lg font-bold text-white">{pilotRoutine.name}</h4>
               {pilotRoutine.description && (
@@ -742,6 +913,18 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                   </li>
                 ))}
               </ul>
+              <button
+                type="button"
+                onClick={handleSavePilotRoutine}
+                disabled={pilotRoutineSaved || isSavingPilotRoutine}
+                className="mt-5 w-full rounded-2xl bg-emerald-600 px-5 py-3 text-xs font-black uppercase tracking-widest text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {pilotRoutineSaved
+                  ? 'Rutina guardada'
+                  : isSavingPilotRoutine
+                    ? 'Guardando...'
+                    : 'Guardar rutina'}
+              </button>
             </section>
           )}
         </div>
@@ -811,7 +994,7 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                   </div>
                   <div className="space-y-2">
                     <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest block text-center">
-                      Reps
+                      Repeticiones
                     </span>
                     <input
                       type="text"
@@ -823,7 +1006,7 @@ const RoutinesView: React.FC<RoutinesViewProps> = ({
                   </div>
                   <div className="space-y-2">
                     <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest block text-center">
-                      Break
+                      Descanso
                     </span>
                     <input
                       type="text"

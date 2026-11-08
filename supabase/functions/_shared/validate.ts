@@ -3,6 +3,12 @@
  * Límites aplicados antes de llamar al proveedor.
  */
 
+import {
+  isRoutineFocus,
+  ROUTINE_FOCUSES,
+  type RoutineFocus
+} from '../../../shared/routine.ts';
+
 const MAX_BODY_BYTES = 100_000;
 const MAX_WORKOUTS = 50;
 const MAX_EXERCISES_PER_WORKOUT = 30;
@@ -154,14 +160,25 @@ export interface ValidatedRecommendationRequest {
   profile: ValidatedProfile;
 }
 
-export interface ValidatedRoutineRequest {
-  daysPerWeek: string;
+interface ValidatedRoutineRequestCommon {
   objective: string;
   level: string;
   equipment?: string;
-  mode: 'basic' | 'pro_plan';
   sessionMinutes?: number;
 }
+
+export type ValidatedRoutineRequest =
+  | (ValidatedRoutineRequestCommon & {
+      daysPerWeek?: string;
+      focuses: RoutineFocus[];
+      mode: 'basic';
+    })
+  | (ValidatedRoutineRequestCommon & {
+      daysPerWeek: string;
+      focus?: RoutineFocus;
+      focuses?: RoutineFocus[];
+      mode: 'pro_plan';
+    });
 
 export function validateBodySize(bodyText: string): void {
   const byteLength = new TextEncoder().encode(bodyText).length;
@@ -257,16 +274,6 @@ export function validateRoutineRequest(body: unknown): ValidatedRoutineRequest {
     throw new ValidationErrorImpl('Cuerpo inválido', 400, 'invalid_input');
   }
   const raw = body as Record<string, unknown>;
-  const rawDaysPerWeek = raw.daysPerWeek;
-  const daysMatch = typeof rawDaysPerWeek === 'string'
-    ? rawDaysPerWeek.match(/^([1-7])(?: d[ií]as?)?$/i)
-    : null;
-  if (!daysMatch) {
-    throw new ValidationErrorImpl('daysPerWeek fuera de rango (1-7)', 400, 'invalid_input');
-  }
-  const daysPerWeek = daysMatch[1];
-  const objective = validateString(raw.objective, 'objective');
-  const level = validateString(raw.level, 'level');
   let mode: 'basic' | 'pro_plan' = 'basic';
   if (raw.mode !== undefined) {
     if (typeof raw.mode !== 'string' || !VALID_MODES.includes(raw.mode)) {
@@ -274,6 +281,49 @@ export function validateRoutineRequest(body: unknown): ValidatedRoutineRequest {
     }
     mode = raw.mode as 'basic' | 'pro_plan';
   }
+
+  const rawDaysPerWeek = raw.daysPerWeek;
+  const daysMatch = rawDaysPerWeek === undefined || rawDaysPerWeek === null
+    ? null
+    : typeof rawDaysPerWeek === 'string'
+      ? rawDaysPerWeek.match(/^([1-7])(?: d[ií]as?)?$/i)
+      : null;
+  if (rawDaysPerWeek !== undefined && rawDaysPerWeek !== null && !daysMatch) {
+    throw new ValidationErrorImpl('daysPerWeek fuera de rango (1-7)', 400, 'invalid_input');
+  }
+  if (mode === 'pro_plan' && !daysMatch) {
+    throw new ValidationErrorImpl('daysPerWeek fuera de rango (1-7)', 400, 'invalid_input');
+  }
+  const daysPerWeek = daysMatch?.[1];
+
+  let focuses: RoutineFocus[] | undefined;
+  if (raw.focuses !== undefined && raw.focuses !== null) {
+    if (
+      !Array.isArray(raw.focuses) ||
+      raw.focuses.length < 1 ||
+      raw.focuses.length > ROUTINE_FOCUSES.length
+    ) {
+      throw new ValidationErrorImpl('Enfoques inválidos', 400, 'invalid_input');
+    }
+    if (!raw.focuses.every(isRoutineFocus) || new Set(raw.focuses).size !== raw.focuses.length) {
+      throw new ValidationErrorImpl('Enfoques inválidos', 400, 'invalid_input');
+    }
+    focuses = raw.focuses;
+  } else if (raw.focus !== undefined && raw.focus !== null) {
+    if (!isRoutineFocus(raw.focus)) {
+      throw new ValidationErrorImpl('Enfoque inválido', 400, 'invalid_input');
+    }
+    focuses = [raw.focus];
+  } else if (mode === 'basic' && daysPerWeek !== undefined) {
+    focuses = ['full_body'];
+  }
+
+  if (focuses?.includes('full_body') && focuses.length > 1) {
+    throw new ValidationErrorImpl('Cuerpo completo no se combina con otros enfoques', 400, 'invalid_input');
+  }
+
+  const objective = validateString(raw.objective, 'objective');
+  const level = validateString(raw.level, 'level');
   let sessionMinutes: number | undefined;
   if (raw.sessionMinutes !== undefined && raw.sessionMinutes !== null) {
     sessionMinutes = requireNumberRange(raw.sessionMinutes, 'sessionMinutes', 1, 480);
@@ -282,7 +332,17 @@ export function validateRoutineRequest(body: unknown): ValidatedRoutineRequest {
   if (raw.equipment !== undefined && raw.equipment !== null) {
     equipment = validateString(raw.equipment, 'equipment');
   }
-  return { daysPerWeek, objective, level, equipment, mode, sessionMinutes };
+  const common = { objective, level, equipment, sessionMinutes };
+  if (mode === 'basic') {
+    if (focuses === undefined) {
+      throw new ValidationErrorImpl('Campo requerido: focuses', 400, 'invalid_input');
+    }
+    return { ...common, daysPerWeek, focuses, mode };
+  }
+  if (daysPerWeek === undefined) {
+    throw new ValidationErrorImpl('daysPerWeek fuera de rango (1-7)', 400, 'invalid_input');
+  }
+  return { ...common, daysPerWeek, focuses, mode };
 }
 
 export function validateRecommendationsResponse(text: string): Array<{ title: string; description: string; category: string }> {

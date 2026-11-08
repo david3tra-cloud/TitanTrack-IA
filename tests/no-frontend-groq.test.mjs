@@ -87,3 +87,8 @@ test('frontend contains no legacy Groq client, direct endpoint, or exposed key r
 
   assert.deepEqual(violations, []);
 });
+
+test('Vite does not inject Gemini API keys into the frontend bundle', async () => {
+  const viteConfig = await readFile(path.join(root, 'vite.config.ts'), 'utf8');
+  assert.doesNotMatch(viteConfig, /GEMINI_API_KEY|process\.env\.API_KEY/);
+});

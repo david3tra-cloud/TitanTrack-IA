@@ -9,7 +9,12 @@ import { corsCheck, corsOptionsResponse, isAllowedOrigin } from '../supabase/fun
 import { validateSession, isPilotUserAllowed } from '../supabase/functions/_shared/auth.ts';
 import { ClosedRateLimiter, RateLimiterNotConfiguredError } from '../supabase/functions/_shared/rate-limit.ts';
 import { GroqClientError } from '../supabase/functions/_shared/groq-client.ts';
-import { ValidationErrorImpl, validateRoutineResponse } from '../supabase/functions/_shared/validate.ts';
+import {
+  ValidationErrorImpl,
+  validateRoutineRequest,
+  validateRoutineResponse,
+} from '../supabase/functions/_shared/validate.ts';
+import { toggleRoutineFocus } from '../shared/routine.ts';
 import { handler as recommendationsHandler } from '../supabase/functions/groq-recommendations/index.ts';
 import { handler as routineHandler } from '../supabase/functions/groq-routine/index.ts';
 
@@ -726,9 +731,9 @@ Deno.test('groq-routine: usuario autenticado + entrada válida devuelve 200 y co
   });
 
   const req = createRequest('POST', 'http://localhost:3001', {
-    daysPerWeek: '3 días',
     objective: 'Crecimiento muscular',
     level: 'intermedio',
+    focuses: ['upper_body'],
     equipment: '',
   });
 
@@ -752,8 +757,165 @@ Deno.test('groq-routine: usuario autenticado + entrada válida devuelve 200 y co
   assertEquals(body.exercises[0].sets, 4);
   assertEquals(body.exercises[0].reps, '6-8');
   assertEquals(body.exercises[0].restTime, '90s');
-  assertEquals(mock.calls[0].messages[0].content.includes('- Días por semana: 3'), true);
+  const prompt = mock.calls[0].messages[0].content;
+  assertEquals(prompt.includes('UNA sola sesión'), true);
+  assertEquals(prompt.includes('Grupos musculares o enfoques seleccionados: Tren superior'), true);
+  assertEquals(prompt.includes('17 a 23'), true);
+  assertEquals(prompt.includes('20 series no significa 20 ejercicios'), true);
+  assertEquals(prompt.includes('Días por semana:'), false);
+  assertEquals(prompt.includes('MODO PLAN SEMANAL'), false);
+  assertEquals(prompt.includes('Lunes'), false);
   assertEquals(mock.callCount, 1);
+});
+
+Deno.test('rutinas: selecciona y deselecciona grupos manteniendo Cuerpo completo exclusivo', () => {
+  let selected = toggleRoutineFocus(['full_body'], 'chest');
+  assertEquals(selected, ['chest']);
+  selected = toggleRoutineFocus(selected, 'back');
+  selected = toggleRoutineFocus(selected, 'core');
+  assertEquals(selected, ['chest', 'back', 'core']);
+
+  selected = toggleRoutineFocus(selected, 'back');
+  assertEquals(selected, ['chest', 'core']);
+  selected = toggleRoutineFocus(selected, 'full_body');
+  assertEquals(selected, ['full_body']);
+  selected = toggleRoutineFocus(selected, 'legs');
+  assertEquals(selected, ['legs']);
+});
+
+Deno.test('groq-routine: sesión en español representa todos los grupos y reparte unas 20 series totales', async () => {
+  const simulatedRoutine = {
+    name: 'Sesión de pecho, espalda y core',
+    description: 'Entrenamiento equilibrado para pecho, espalda y zona media.',
+    exercises: [
+      { name: 'Press de banca', sets: 4, reps: '8-10', restTime: '90 segundos' },
+      { name: 'Press inclinado con mancuernas', sets: 3, reps: '10-12', restTime: '75 segundos' },
+      { name: 'Remo con barra', sets: 4, reps: '8-10', restTime: '90 segundos' },
+      { name: 'Jalón al pecho', sets: 4, reps: '10-12', restTime: '75 segundos' },
+      { name: 'Plancha abdominal', sets: 5, reps: '30-45 segundos', restTime: '60 segundos' },
+    ],
+  };
+  const mock = createMockCallGroq({ validResponse: JSON.stringify(simulatedRoutine) });
+  const selectedFocuses = ['chest', 'back', 'core'];
+  const req = createRequest('POST', 'http://localhost:3001', {
+    objective: 'Crecimiento muscular',
+    level: 'intermedio',
+    focuses: selectedFocuses,
+    sessionMinutes: 60,
+  });
+
+  const res = await routineHandler(req, {
+    validateSession: mockValidateSession(true),
+    callGroq: mock.mockCallGroq,
+    RateLimiter: MockRateLimiterAllow,
+  });
+
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body.name, 'Sesión de pecho, espalda y core');
+  assertEquals(body.description.includes('pecho, espalda y zona media'), true);
+  assertEquals(body.exercises.map((exercise: { name: string }) => exercise.name), [
+    'Press de banca',
+    'Press inclinado con mancuernas',
+    'Remo con barra',
+    'Jalón al pecho',
+    'Plancha abdominal',
+  ]);
+  assertEquals(body.exercises.reduce(
+    (total: number, exercise: { sets: number }) => total + exercise.sets,
+    0,
+  ), 20);
+
+  const prompt = mock.calls[0].messages[0].content;
+  assertEquals(prompt.includes('Pecho, Espalda, Core'), true);
+  assertEquals(prompt.includes('cada uno de los grupos seleccionados'), true);
+  assertEquals(prompt.includes('17 a 23 en conjunto'), true);
+  assertEquals(prompt.includes('ni 20 series por grupo'), true);
+  assertEquals(prompt.includes('en español'), true);
+  assertEquals(prompt.includes('Crea UNA sola sesión'), true);
+  assertEquals(prompt.includes('Días por semana:'), false);
+  assertEquals(prompt.includes('MODO PLAN SEMANAL'), false);
+});
+
+Deno.test('groq-routine: acepta daysPerWeek legado pero no lo usa en prompt básico', async () => {
+  const mock = createMockCallGroq({
+    validResponse: JSON.stringify({
+      name: 'Sesión anterior',
+      description: 'Compatibilidad de cliente',
+      exercises: [{ name: 'Sentadilla', sets: 4, reps: '8-10', restTime: '90s' }],
+    }),
+  });
+  const req = createRequest('POST', 'http://localhost:3001', {
+    daysPerWeek: '3 días',
+    objective: 'Fuerza',
+    level: 'intermedio',
+  });
+
+  const res = await routineHandler(req, {
+    validateSession: mockValidateSession(true),
+    callGroq: mock.mockCallGroq,
+    RateLimiter: MockRateLimiterAllow,
+  });
+
+  assertEquals(res.status, 200);
+  const prompt = mock.calls[0].messages[0].content;
+  assertEquals(prompt.includes('Días por semana:'), false);
+  assertEquals(prompt.includes('3 días'), false);
+  assertEquals(prompt.includes('Grupos musculares o enfoques seleccionados: Cuerpo completo'), true);
+  assertEquals(mock.callCount, 1);
+});
+
+Deno.test('validateRoutineRequest: enfoque requerido y validado en basic; pro_plan conserva sus días', () => {
+  const basic = validateRoutineRequest({
+    objective: 'Fuerza',
+    level: 'intermedio',
+    focuses: ['upper_body', 'back'],
+  });
+  assertEquals(basic.daysPerWeek, undefined);
+  assertEquals(basic.focuses, ['upper_body', 'back']);
+
+  const legacySingleFocus = validateRoutineRequest({
+    objective: 'Fuerza',
+    level: 'intermedio',
+    focus: 'upper_body',
+  });
+  assertEquals(legacySingleFocus.focuses, ['upper_body']);
+
+  for (const body of [
+    { objective: 'Fuerza', level: 'intermedio' },
+    { objective: 'Fuerza', level: 'intermedio', focus: 'unknown' },
+    { objective: 'Fuerza', level: 'intermedio', focuses: [] },
+    { objective: 'Fuerza', level: 'intermedio', focuses: ['chest', 'chest'] },
+    { objective: 'Fuerza', level: 'intermedio', focuses: ['full_body', 'back'] },
+  ]) {
+    let caught: unknown;
+    try {
+      validateRoutineRequest(body);
+    } catch (error) {
+      caught = error;
+    }
+    assertEquals(caught instanceof ValidationErrorImpl, true);
+    if (caught instanceof ValidationErrorImpl) {
+      assertEquals(caught.status, 400);
+    }
+  }
+
+  const legacyBasic = validateRoutineRequest({
+    daysPerWeek: '3 días',
+    objective: 'Fuerza',
+    level: 'intermedio',
+  });
+  assertEquals(legacyBasic.daysPerWeek, '3');
+  assertEquals(legacyBasic.focuses, ['full_body']);
+
+  const proPlan = validateRoutineRequest({
+    mode: 'pro_plan',
+    daysPerWeek: '3 días',
+    objective: 'Fuerza',
+    level: 'intermedio',
+  });
+  assertEquals(proPlan.daysPerWeek, '3');
+  assertEquals(proPlan.focuses, undefined);
 });
 
 Deno.test('validateRoutineResponse: exige ejercicios y series enteras dentro del rango', () => {

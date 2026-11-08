@@ -4,17 +4,30 @@ import {
   EdgeRecommendationsError,
   getPersonalizedRecommendationsGroq,
 } from '../services/aiService.edge';
+import { isAiPilotEnabled } from '../shared/aiPilot';
 
 interface RecommendationsProps {
   workouts: Workout[];
   profile: UserProfile;
+  isLoggedIn: boolean;
   isPro?: boolean;
   nutritionAppUrl?: string;
+}
+
+export function isRecommendationsPilotEnabled(
+  isDevelopment: boolean,
+  isProduction: boolean,
+  pilotFlag: string | undefined,
+  origin: string | undefined,
+  isLoggedIn: boolean
+): boolean {
+  return isAiPilotEnabled(isDevelopment, isProduction, pilotFlag, origin, isLoggedIn);
 }
 
 const Recommendations: React.FC<RecommendationsProps> = ({
   workouts,
   profile,
+  isLoggedIn,
   isPro = false,
   nutritionAppUrl
 }) => {
@@ -23,16 +36,18 @@ const Recommendations: React.FC<RecommendationsProps> = ({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestInFlightRef = useRef(false);
-  const pilotEnabled =
-    import.meta.env.VITE_AI_RECOMMENDATIONS_PILOT === 'true' &&
-    import.meta.env.DEV === true &&
-    typeof window !== 'undefined' &&
-    window.location.origin === 'http://localhost:3001';
+  const pilotEnabled = isRecommendationsPilotEnabled(
+    import.meta.env.DEV === true,
+    import.meta.env.PROD === true,
+    import.meta.env.VITE_AI_RECOMMENDATIONS_PILOT,
+    typeof window === 'undefined' ? undefined : window.location.origin,
+    isLoggedIn
+  );
 
   const fetchRecommendations = async () => {
-    if (!pilotEnabled || requestInFlightRef.current) return;
+    if (!pilotEnabled || !isLoggedIn || requestInFlightRef.current) return;
     if (!window.confirm(
-      'La prueba usa exclusivamente datos ficticios, puede consumir una unidad de cuota y contactará con Groq. ¿Deseas continuar?'
+      'Esta prueba usa un perfil ficticio y no analiza tu historial ni tu perfil real. Puede consumir cuota y contactar con el servicio de IA. ¿Deseas continuar?'
     )) return;
 
     requestInFlightRef.current = true;
@@ -127,19 +142,17 @@ const Recommendations: React.FC<RecommendationsProps> = ({
             </div>
 
             <h2 className="text-2xl md:text-3xl font-black text-white italic uppercase tracking-tighter">
-              {isPro ? 'Coach IA avanzado' : 'Coach IA personal'}
+              Prueba de recomendaciones IA
             </h2>
 
             <p className="text-slate-300 mt-3 max-w-2xl text-sm md:text-base">
-              {isPro
-                ? 'Analiza tu perfil y tus entrenos y te orienta con un enfoque más premium, alineado con tu progresión, recuperación y estrategia semanal.'
-                : 'Análisis rápido basado en tu perfil y tus últimos entrenamientos para darte consejos útiles y accionables.'}
+              Esta prueba usa datos sintéticos y no analiza tu historial ni tu perfil real.
             </p>
           </div>
 
           <button
             onClick={fetchRecommendations}
-            disabled={!pilotEnabled || loading}
+            disabled={!pilotEnabled || !isLoggedIn || loading}
             className={`px-6 py-4 rounded-2xl font-black uppercase tracking-[0.2em] text-[10px] transition-all shadow-lg ${
               isPro
                 ? 'bg-gradient-to-r from-fuchsia-600 to-cyan-500 hover:from-fuchsia-500 hover:to-cyan-400 disabled:bg-slate-700 text-white shadow-[0_0_30px_rgba(255,0,247,0.25)]'
@@ -149,9 +162,19 @@ const Recommendations: React.FC<RecommendationsProps> = ({
             {loading ? 'PROBANDO IA...' : 'Probar IA con datos ficticios'}
           </button>
         </div>
-        {!pilotEnabled && (
+        {pilotEnabled && (
+          <p className="relative mt-5 text-amber-200 text-sm" role="note">
+            Esta prueba usa únicamente datos sintéticos. No analiza tu perfil ni tu historial real y puede consumir cuota de IA.
+          </p>
+        )}
+        {!isLoggedIn && (
           <p className="relative mt-5 text-amber-300 text-sm" role="status">
-            La generación de recomendaciones está desactivada. El piloto solo funciona en desarrollo en localhost:3001 con activación explícita.
+            Inicia sesión para usar la prueba de recomendaciones.
+          </p>
+        )}
+        {isLoggedIn && !pilotEnabled && (
+          <p className="relative mt-5 text-amber-300 text-sm" role="status">
+            La generación de recomendaciones está desactivada. Requiere activación explícita y un origen de desarrollo local o el dominio de producción autorizado.
           </p>
         )}
       </div>
@@ -160,7 +183,7 @@ const Recommendations: React.FC<RecommendationsProps> = ({
       {workouts.length === 0 && (
         <div className="bg-black/40 p-12 rounded-[32px] border border-white/10 text-center">
           <p className="text-slate-400 text-lg">
-            Registra algunos entrenamientos para que la IA pueda darte consejos personalizados.
+            La prueba de recomendaciones usa datos sintéticos y no depende de tus entrenamientos registrados.
           </p>
         </div>
       )}
@@ -251,7 +274,7 @@ const Recommendations: React.FC<RecommendationsProps> = ({
             <div className="space-y-3">
               <div className="rounded-2xl bg-slate-900/70 border border-white/10 p-4">
                 <p className="text-slate-500 text-[10px] uppercase font-black tracking-[0.25em]">
-                  Entrenos analizados
+                  Entrenos registrados
                 </p>
                 <p className="text-white text-2xl font-black mt-1">{workouts.length}</p>
               </div>

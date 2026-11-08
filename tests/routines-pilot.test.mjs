@@ -7,7 +7,7 @@ import { createServer } from 'vite';
 
 const root = path.resolve(import.meta.dirname, '..');
 
-test('Edge routine pilot sends only fixed parameters and keeps the result as a preview', async () => {
+test('Edge routine pilot sends all selected groups and keeps the result as a preview', async () => {
   const originalFetch = globalThis.fetch;
   const originalEnv = {
     VITE_SUPABASE_URL: process.env.VITE_SUPABASE_URL,
@@ -37,14 +37,14 @@ test('Edge routine pilot sends only fixed parameters and keeps the result as a p
         responseStatus === 200
           ? {
               id: 'routine-preview-id',
-              name: 'Rutina ficticia',
+              name: 'Rutina ficticia en español',
               description: 'Vista previa',
               exercises: [{
                 id: 'exercise-preview-id',
-                name: 'Press',
+                name: 'Press de banca',
                 sets: 3,
                 reps: '8-10',
-                restTime: '60s',
+                restTime: '60 segundos',
               }],
             }
           : { error: 'controlled fake error' }
@@ -73,31 +73,37 @@ test('Edge routine pilot sends only fixed parameters and keeps the result as a p
     });
     const service = await server.ssrLoadModule('/services/aiService.edge.ts');
     const componentModule = await server.ssrLoadModule('/components/RoutinesView.tsx');
-    assert.equal(componentModule.isRoutinePilotEnabled(true, undefined, 'http://localhost:3001'), false);
-    assert.equal(componentModule.isRoutinePilotEnabled(true, 'false', 'http://localhost:3001'), false);
-    assert.equal(componentModule.isRoutinePilotEnabled(false, 'true', 'http://localhost:3001'), false);
-    assert.equal(componentModule.isRoutinePilotEnabled(true, 'true', 'http://localhost:3000'), false);
-    assert.equal(componentModule.isRoutinePilotEnabled(true, 'true', 'http://localhost:3001'), true);
+    assert.equal(componentModule.isRoutinePilotEnabled(true, false, undefined, 'http://localhost:3001', true), false);
+    assert.equal(componentModule.isRoutinePilotEnabled(true, false, 'false', 'http://localhost:3001', true), false);
+    assert.equal(componentModule.isRoutinePilotEnabled(false, false, 'true', 'http://localhost:3001', true), false);
+    assert.equal(componentModule.isRoutinePilotEnabled(true, false, 'true', 'http://localhost:3000', true), false);
+    assert.equal(componentModule.isRoutinePilotEnabled(false, true, 'true', 'https://titantrack-clean.vercel.app', true), true);
+    assert.equal(componentModule.isRoutinePilotEnabled(false, true, 'true', 'https://preview-titantrack.vercel.app', true), false);
+    assert.equal(componentModule.isRoutinePilotEnabled(false, true, 'true', 'https://titantrack-clean.vercel.app.evil.test', true), false);
+    assert.equal(componentModule.isRoutinePilotEnabled(false, true, 'true', 'https://titantrack-clean.vercel.app', false), false);
 
-    const result = await service.generateRoutineGroq({
-      daysPerWeek: '3 días',
+    const requestParams = {
       objective: 'Fuerza general',
       level: 'Principiante',
+      focuses: ['chest', 'back', 'core'],
       equipment: 'Mancuernas',
       mode: 'basic',
       sessionMinutes: 45,
+    };
+    const result = await service.generateRoutineGroq({
+      ...requestParams,
     });
 
     assert.deepEqual(result, {
       id: 'routine-preview-id',
-      name: 'Rutina ficticia',
+      name: 'Rutina ficticia en español',
       description: 'Vista previa',
       exercises: [{
         id: 'exercise-preview-id',
-        name: 'Press',
+        name: 'Press de banca',
         sets: 3,
         reps: '8-10',
-        restTime: '60s',
+        restTime: '60 segundos',
       }],
     });
     assert.equal(calls.length, 1);
@@ -107,37 +113,16 @@ test('Edge routine pilot sends only fixed parameters and keeps the result as a p
     );
     assert.equal(calls[0].method, 'POST');
     assert.equal(calls[0].hasAuthorization, true);
-    assert.deepEqual(calls[0].body, {
-      daysPerWeek: '3 días',
-      objective: 'Fuerza general',
-      level: 'Principiante',
-      equipment: 'Mancuernas',
-      mode: 'basic',
-      sessionMinutes: 45,
-    });
+    assert.deepEqual(calls[0].body, requestParams);
 
     responseStatus = 502;
     await assert.rejects(
-      service.generateRoutineGroq({
-        daysPerWeek: '3 días',
-        objective: 'Fuerza general',
-        level: 'Principiante',
-        equipment: 'Mancuernas',
-        mode: 'basic',
-        sessionMinutes: 45,
-      }),
+      service.generateRoutineGroq(requestParams),
       /controlled fake error/
     );
     rejectFetch = true;
     await assert.rejects(
-      service.generateRoutineGroq({
-        daysPerWeek: '3 días',
-        objective: 'Fuerza general',
-        level: 'Principiante',
-        equipment: 'Mancuernas',
-        mode: 'basic',
-        sessionMinutes: 45,
-      }),
+      service.generateRoutineGroq(requestParams),
       TypeError
     );
     assert.equal(calls.length, 3);
@@ -149,15 +134,15 @@ test('Edge routine pilot sends only fixed parameters and keeps the result as a p
     assert.match(component, /from '\.\.\/services\/aiService\.edge'/);
     assert.doesNotMatch(component, /from '\.\.\/services\/aiService'/);
     assert.match(component, /import\.meta\.env\.DEV === true/);
+    assert.match(component, /import\.meta\.env\.PROD === true/);
     assert.match(component, /import\.meta\.env\.VITE_AI_ROUTINE_PILOT/);
     assert.match(component, /window\.location\.origin/);
-    assert.match(component, /pilotFlag === 'true'/);
-    assert.match(component, /origin === 'http:\/\/localhost:3001'/);
-    assert.doesNotMatch(component, /\buseEffect\b/);
+    assert.match(component, /isAiPilotEnabled\(isDevelopment, isProduction, pilotFlag, origin, isLoggedIn\)/);
 
     const basicHandlerStart = component.indexOf('const handleAiGenerateBasic');
+    const saveHandlerStart = component.indexOf('const handleSavePilotRoutine', basicHandlerStart);
     const proHandlerStart = component.indexOf('const handleAiGeneratePro');
-    const basicHandler = component.slice(basicHandlerStart, proHandlerStart);
+    const basicHandler = component.slice(basicHandlerStart, saveHandlerStart);
     assert.ok(basicHandlerStart >= 0 && proHandlerStart > basicHandlerStart);
     assert.match(basicHandler, /!routinePilotEnabled/);
     assert.match(basicHandler, /routinePilotRequestInFlight\.current/);
@@ -166,18 +151,22 @@ test('Edge routine pilot sends only fixed parameters and keeps the result as a p
       basicHandler.indexOf('window.confirm(') <
         basicHandler.indexOf('generateRoutineGroq({')
     );
-    assert.match(basicHandler, /daysPerWeek: '3 días'/);
-    assert.match(basicHandler, /objective: 'Fuerza general'/);
-    assert.match(basicHandler, /level: 'Principiante'/);
-    assert.match(basicHandler, /equipment: 'Mancuernas'/);
+    assert.match(basicHandler, /objective: aiObjective/);
+    assert.match(basicHandler, /level: aiLevel/);
+    assert.match(basicHandler, /focuses: aiFocuses/);
+    assert.match(basicHandler, /equipment: aiEquipment\.trim\(\)/);
     assert.match(basicHandler, /mode: 'basic'/);
-    assert.match(basicHandler, /sessionMinutes: 45/);
+    assert.match(basicHandler, /sessionMinutes: parsedSessionMinutes/);
     assert.match(basicHandler, /routinePilotRequestInFlight\.current = true/);
     assert.match(basicHandler, /finally\s*\{\s*routinePilotRequestInFlight\.current = false/);
     assert.doesNotMatch(basicHandler, /onSaveRoutine|setActiveTab\('list'\)/);
-    assert.match(component, /Vista previa de prueba con parámetros ficticios; no se ha guardado/);
+    assert.match(component, /Vista previa de la rutina generada; no se ha guardado/);
+    assert.match(component, /const handleSavePilotRoutine = async/);
     assert.match(component, /setPilotRoutine\(newRoutine\)/);
     assert.match(component, /No se pudo completar la prueba de rutina/);
+    assert.match(component, /aria-pressed=\{isSelected\}/);
+    assert.match(component, /toggleRoutineFocus\(current, focus\)/);
+    assert.match(component, /Puedes elegir varios grupos musculares/);
     assert.equal((component.match(/generateRoutineGroq\(/g) ?? []).length, 1);
 
     const proHandler = component.slice(proHandlerStart, component.indexOf('const isWeeklyPlan'));

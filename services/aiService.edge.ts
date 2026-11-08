@@ -10,6 +10,7 @@
 
 import { supabase } from '../src/lib/supabaseClient';
 import type { Recommendation, Routine } from '../types';
+import type { RoutineFocus } from '../shared/routine';
 
 const FUNCTIONS_BASE =
   'https://aziowzwhizjytzcqfent.supabase.co/functions/v1';
@@ -39,6 +40,25 @@ export class EdgeRecommendationsError extends Error {
     this.name = 'EdgeRecommendationsError';
   }
 }
+
+type RoutineGenerationCommon = {
+  objective: string;
+  level: string;
+  equipment?: string;
+  sessionMinutes?: number;
+};
+
+type RoutineGenerationParams =
+  | (RoutineGenerationCommon & {
+      mode?: 'basic';
+      focuses: RoutineFocus[];
+      daysPerWeek?: string;
+    })
+  | (RoutineGenerationCommon & {
+      mode: 'pro_plan';
+      daysPerWeek: string;
+      focus?: RoutineFocus;
+    });
 
 const SYNTHETIC_RECOMMENDATION_REQUEST = {
   workouts: [],
@@ -107,16 +127,7 @@ export async function getPersonalizedRecommendationsGroq(): Promise<Recommendati
   return result;
 }
 
-export async function generateRoutineGroq(
-  params: {
-    daysPerWeek: string;
-    objective: string;
-    level: string;
-    equipment?: string;
-    mode?: 'basic' | 'pro_plan';
-    sessionMinutes?: number;
-  }
-): Promise<Routine> {
+export async function generateRoutineGroq(params: RoutineGenerationParams): Promise<Routine> {
   const accessToken = await getAccessToken();
 
   const response = await fetch(`${FUNCTIONS_BASE}/groq-routine`, {
